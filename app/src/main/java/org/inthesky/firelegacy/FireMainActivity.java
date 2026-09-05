@@ -50,7 +50,10 @@ public class FireMainActivity extends Activity {
     private ImageView aircraftImage;
     private TextView aircraftTitle, aircraftDetails, aircraftReference;
     private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay, weatherWarnings;
-    private TextView timeClock, timeDate, timeZones;
+    private TextView timeClock, timeDate, timeZones, launchSummary;
+    private Button launchMoreButton;
+    private final List<LegacyLaunch> launchList = new ArrayList<LegacyLaunch>();
+    private boolean launchesExpanded = false;
     private WeatherCompassView windViewRef;
     private WeatherHistoryView historyViewRef;
     private Runnable radarTick, clockTick, pageCycleTick;
@@ -680,6 +683,14 @@ public class FireMainActivity extends Activity {
         return "☀";
     }
 
+    static class LegacyLaunch {
+        final String name,status,mission,pad,location;
+        final long netMillis;
+        LegacyLaunch(String name,long netMillis,String status,String mission,String pad,String location){
+            this.name=name;this.netMillis=netMillis;this.status=status;this.mission=mission;this.pad=pad;this.location=location;
+        }
+    }
+
     static class WeatherDisplay {
         final String current,forecast,fiveDay;
         final double windDirection,windSpeed,humidity,cloud;
@@ -736,9 +747,27 @@ public class FireMainActivity extends Activity {
         info.addView(divider);
         info.addView(timeZones);
 
+        TextView launchDivider=text("──────  UPCOMING ROCKET LAUNCHES  ──────",12,AMBER);
+        launchDivider.setGravity(Gravity.CENTER);
+        info.addView(launchDivider);
+
+        launchSummary=text("LOADING UPCOMING MISSIONS…",13,TEXT);
+        launchSummary.setBackgroundColor(Color.rgb(3,15,11));
+        launchSummary.setPadding(dp(10),dp(10),dp(10),dp(10));
+        info.addView(launchSummary);
+
+        launchMoreButton=button("MORE");
+        launchMoreButton.setOnClickListener(v -> {
+            launchesExpanded=!launchesExpanded;
+            launchMoreButton.setText(launchesExpanded?"LESS":"MORE");
+            renderLaunches();
+        });
+        info.addView(launchMoreButton,new LinearLayout.LayoutParams(-1,dp(44)));
+
         infoScroll.addView(info);
         page.addView(infoScroll, new LinearLayout.LayoutParams(0, -1, 4.5f));
         pageHost.addView(page);
+        refreshLaunches();
 
         clockTick = new Runnable() {
             public void run() {
@@ -768,10 +797,123 @@ public class FireMainActivity extends Activity {
                     zoneLine("SYDNEY", "Australia/Sydney", now, h24)
                 );
                 analog.setTime(now);
+                if(!launchList.isEmpty()) renderLaunches();
                 ui.postDelayed(this, 1000);
             }
         };
         clockTick.run();
+    }
+
+    private void refreshLaunches() {
+        if(launchSummary==null)return;
+        launchSummary.setText("LOADING UPCOMING MISSIONS…");
+        io.execute(() -> {
+            final ArrayList<LegacyLaunch> loaded=new ArrayList<LegacyLaunch>();
+            String error=null;
+            try {
+                JSONObject root=getJson("https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10");
+                JSONArray results=root.optJSONArray("results");
+                if(results!=null) for(int i=0;i<results.length();i++){
+                    JSONObject item=results.optJSONObject(i);
+                    if(item==null)continue;
+                    String name=item.optString("name","Unnamed mission");
+                    String net=item.optString("net");
+                    long millis=parseIsoMillis(net);
+                    if(millis<=0)continue;
+                    JSONObject status=item.optJSONObject("status");
+                    JSONObject mission=item.optJSONObject("mission");
+                    JSONObject pad=item.optJSONObject("pad");
+                    JSONObject location=pad==null?null:pad.optJSONObject("location");
+                    loaded.add(new LegacyLaunch(
+                        name,
+                        millis,
+                        status==null?"Scheduled":status.optString("name","Scheduled"),
+                        mission==null?"":mission.optString("description",""),
+                        pad==null?"":pad.optString("name",""),
+                        location==null?"":location.optString("name","")
+                    ));
+                }
+                Collections.sort(loaded,(a,b)->Long.compare(a.netMillis,b.netMillis));
+            } catch(Exception e) {
+                error="Launch feed unavailable: "+shortError(e);
+            }
+            final String finalError=error;
+            ui.post(() -> {
+                launchList.clear();
+                launchList.addAll(loaded);
+                if(finalError!=null && launchList.isEmpty()) launchSummary.setText(finalError);
+                else renderLaunches();
+            });
+        });
+    }
+
+    private long parseIsoMillis(String iso) {
+        if(iso==null||iso.length()==0)return 0;
+        String[] patterns={
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        };
+        for(String pattern:patterns){
+            try{
+                SimpleDateFormat f=new SimpleDateFormat(pattern,Locale.US);
+                f.setTimeZone(TimeZone.getTimeZone("UTC"));
+                Date d=f.parse(iso);
+                if(d!=null)return d.getTime();
+            }catch(Exception ignored){}
+        }
+        return 0;
+    }
+
+    private void renderLaunches() {
+        if(launchSummary==null)return;
+        if(launchList.isEmpty()){
+            launchSummary.setText("No upcoming launch data available.");
+            return;
+        }
+        long now=System.currentTimeMillis();
+        int count=Math.min(launchesExpanded?8:3,launchList.size());
+        StringBuilder out=new StringBuilder();
+
+        LegacyLaunch first=launchList.get(0);
+        out.append("NEXT  ").append(launchCountdown(first.netMillis-now)).append("\n");
+        out.append(first.name).append("\n");
+        out.append(first.status.toUpperCase(Locale.US)).append("  •  ")
+           .append(formatLaunchTime(first.netMillis)).append("\n");
+
+        for(int i=0;i<count;i++){
+            LegacyLaunch l=launchList.get(i);
+            out.append("\n").append(i+1).append(". ").append(l.name).append("\n");
+            out.append("   ").append(formatLaunchTime(l.netMillis))
+               .append("  •  ").append(launchCountdown(l.netMillis-now)).append("\n");
+            if(launchesExpanded){
+                if(l.pad.length()>0)out.append("   PAD: ").append(l.pad).append("\n");
+                if(l.location.length()>0)out.append("   SITE: ").append(l.location).append("\n");
+                if(l.mission.length()>0){
+                    String m=l.mission.replace("\n"," ").trim();
+                    if(m.length()>220)m=m.substring(0,220)+"…";
+                    out.append("   ").append(m).append("\n");
+                }
+            }
+        }
+        launchSummary.setText(out.toString().trim());
+    }
+
+    private String launchCountdown(long diff) {
+        boolean passed=diff<0;
+        long sec=Math.abs(diff)/1000;
+        long days=sec/86400; sec%=86400;
+        long hrs=sec/3600; sec%=3600;
+        long min=sec/60; long s=sec%60;
+        String core=days>0
+            ? String.format(Locale.US,"%dd %02d:%02d:%02d",days,hrs,min,s)
+            : String.format(Locale.US,"%02d:%02d:%02d",hrs,min,s);
+        return (passed?"T+":"T−")+core;
+    }
+
+    private String formatLaunchTime(long millis) {
+        SimpleDateFormat f=new SimpleDateFormat("d MMM yyyy  HH:mm z",Locale.UK);
+        return f.format(new Date(millis));
     }
 
     private String zoneLine(String label, String zone, Date now, boolean h24) {
