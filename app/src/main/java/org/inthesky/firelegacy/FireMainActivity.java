@@ -49,8 +49,9 @@ public class FireMainActivity extends Activity {
     private LinearLayout aircraftCard;
     private ImageView aircraftImage;
     private TextView aircraftTitle, aircraftDetails, aircraftReference;
-    private TextView weatherBody, weatherStatus, weatherCurrent;
+    private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay;
     private TextView timeClock, timeDate, timeZones;
+    private WeatherCompassView windViewRef;
     private Runnable radarTick, clockTick;
     private SSLSocketFactory weatherSslFactory;
     private List<Aircraft> aircraft = new ArrayList<Aircraft>();
@@ -213,6 +214,7 @@ public class FireMainActivity extends Activity {
         radarView.setOrientation(prefs.getInt("orientation", 0));
         radarView.setTrails(prefs.getBoolean("trails", true));
         radarView.setMiles(prefs.getBoolean("miles", false));
+        radarView.setAlertRange(prefs.getBoolean("alertEnabled",true),prefs.getInt("alertRange",10));
         radarView.setOnAircraftTapListener(this::selectAircraft);
         LinearLayout.LayoutParams radarLp = new LinearLayout.LayoutParams(0, -1, 7f);
         radarLp.setMargins(dp(6), dp(2), dp(4), dp(6));
@@ -378,40 +380,55 @@ public class FireMainActivity extends Activity {
     private void showWeather() {
         clearPage();
 
+        ScrollView outer = new ScrollView(this);
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(10),dp(8),dp(10),dp(8));
+        page.setPadding(dp(10),dp(8),dp(10),dp(16));
         page.setBackgroundColor(BG);
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        weatherStatus = text("WEATHER // "+locationLabel(), 17, GREEN);
+        weatherStatus = text("WEATHER // "+locationLabel(), 18, GREEN);
         Button refresh = button("REFRESH");
         refresh.setOnClickListener(v -> refreshWeather());
-        top.addView(weatherStatus,new LinearLayout.LayoutParams(0,dp(48),1f));
-        top.addView(refresh,new LinearLayout.LayoutParams(dp(110),dp(48)));
+        top.addView(weatherStatus,new LinearLayout.LayoutParams(0,dp(50),1f));
+        top.addView(refresh,new LinearLayout.LayoutParams(dp(110),dp(50)));
         page.addView(top);
 
-        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 18, TEXT);
+        TextView localTitle=text("LOCAL FORECAST",13,DIM);
+        page.addView(localTitle);
+
+        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 22, TEXT);
         weatherCurrent.setBackgroundColor(PANEL);
-        weatherCurrent.setPadding(dp(14),dp(12),dp(14),dp(12));
-        page.addView(weatherCurrent,new LinearLayout.LayoutParams(-1,dp(118)));
+        weatherCurrent.setPadding(dp(18),dp(16),dp(18),dp(16));
+        page.addView(weatherCurrent,new LinearLayout.LayoutParams(-1,dp(138)));
 
-        TextView outlookTitle=text("12 HOUR OUTLOOK",12,DIM);
+        TextView windTitle=text("WIND / ATMOSPHERE",13,DIM);
+        page.addView(windTitle);
+        WeatherCompassView windView=new WeatherCompassView(this);
+        page.addView(windView,new LinearLayout.LayoutParams(-1,dp(210)));
+        windViewRef=windView;
+
+        TextView fiveTitle=text("FIVE DAY OUTLOOK",13,DIM);
+        page.addView(fiveTitle);
+        weatherFiveDay=text("Waiting for forecast data…",14,TEXT);
+        weatherFiveDay.setBackgroundColor(PANEL);
+        weatherFiveDay.setPadding(dp(14),dp(12),dp(14),dp(12));
+        page.addView(weatherFiveDay);
+
+        TextView outlookTitle=text("NEXT 24 HOURS",13,DIM);
         page.addView(outlookTitle);
-
-        ScrollView forecastScroll=new ScrollView(this);
         weatherBody=text("Loading forecast…",14,TEXT);
         weatherBody.setBackgroundColor(Color.rgb(3,15,11));
-        weatherBody.setPadding(dp(14),dp(10),dp(14),dp(10));
-        forecastScroll.addView(weatherBody);
-        page.addView(forecastScroll,new LinearLayout.LayoutParams(-1,0,1f));
+        weatherBody.setPadding(dp(14),dp(12),dp(14),dp(12));
+        page.addView(weatherBody);
 
-        TextView source=text("Primary: MET Norway  •  automatic Open-Meteo fallback for Fire OS TLS compatibility",10,DIM);
+        TextView source=text("Primary: MET Norway  •  automatic Open-Meteo fallback on Fire OS 5",10,DIM);
         page.addView(source);
 
-        pageHost.addView(page);
+        outer.addView(page);
+        pageHost.addView(outer);
         refreshWeather();
     }
 
@@ -429,7 +446,7 @@ public class FireMainActivity extends Activity {
                 } catch (Exception metError) {
                     provider="OPEN-METEO";
                     String url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
-                        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"+
+                        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code"+
                         "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&forecast_days=2";
                     wx=parseOpenMeteo(getJson(url));
                 }
@@ -439,6 +456,8 @@ public class FireMainActivity extends Activity {
                     weatherStatus.setText("WEATHER // "+locationLabel()+" // "+source);
                     weatherCurrent.setText(display.current);
                     weatherBody.setText(display.forecast);
+                    weatherFiveDay.setText(display.fiveDay);
+                    if(windViewRef!=null) windViewRef.setWind(display.windDirection, display.windSpeed, display.humidity, display.cloud);
                 });
             } catch(final Exception e) {
                 ui.post(() -> {
@@ -460,6 +479,8 @@ public class FireMainActivity extends Activity {
         double wind=d.optDouble("wind_speed");
         double hum=d.optDouble("relative_humidity");
         double pressure=d.optDouble("air_pressure_at_sea_level",Double.NaN);
+        double direction=d.optDouble("wind_from_direction",Double.NaN);
+        double cloud=d.optDouble("cloud_area_fraction",Double.NaN);
         String current=
             weatherGlyph(symbol)+"  "+temperatureLabel(temp)+"   "+symbol.replace("_"," ").toUpperCase(Locale.US)+"\n"+
             "HUMIDITY  "+String.format(Locale.US,"%.0f%%",hum)+"     WIND  "+String.format(Locale.US,"%.1f m/s",wind)+
@@ -477,7 +498,8 @@ public class FireMainActivity extends Activity {
                 shortIso(p.optString("time")),weatherGlyph(code),temperatureLabel(details.optDouble("air_temperature")),
                 details.optDouble("relative_humidity"),details.optDouble("wind_speed")));
         }
-        return new WeatherDisplay(current,sb.toString());
+        String fiveDay=buildFiveDayFromMet(ts);
+        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,cloud);
     }
 
     private WeatherDisplay parseOpenMeteo(JSONObject root) throws Exception {
@@ -485,6 +507,7 @@ public class FireMainActivity extends Activity {
         double temp=cur.optDouble("temperature_2m");
         double hum=cur.optDouble("relative_humidity_2m");
         double wind=cur.optDouble("wind_speed_10m");
+        double direction=cur.optDouble("wind_direction_10m",Double.NaN);
         int code=cur.optInt("weather_code");
         String current=
             weatherGlyph(code)+"  "+temperatureLabel(temp)+"   "+weatherCode(code).toUpperCase(Locale.US)+"\n"+
@@ -502,7 +525,42 @@ public class FireMainActivity extends Activity {
                 shortIso(times.optString(i)),weatherGlyph(wc),temperatureLabel(temps.optDouble(i)),
                 hums.optDouble(i),winds.optDouble(i)));
         }
-        return new WeatherDisplay(current,sb.toString());
+        String fiveDay=buildFiveDayFromOpenMeteo(root);
+        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,Double.NaN);
+    }
+
+    private String buildFiveDayFromMet(JSONArray ts) throws Exception {
+        LinkedHashMap<String,double[]> days=new LinkedHashMap<String,double[]>();
+        LinkedHashMap<String,String> labels=new LinkedHashMap<String,String>();
+        SimpleDateFormat in=new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'",Locale.US);
+        in.setTimeZone(TimeZone.getTimeZone("UTC"));
+        SimpleDateFormat keyFmt=new SimpleDateFormat("yyyy-MM-dd",Locale.US);
+        SimpleDateFormat dayFmt=new SimpleDateFormat("EEE  d MMM",Locale.UK);
+        for(int i=0;i<ts.length()&&days.size()<6;i++){
+            JSONObject p=ts.getJSONObject(i);
+            Date dt;
+            try{dt=in.parse(p.optString("time"));}catch(Exception ex){continue;}
+            String key=keyFmt.format(dt);
+            JSONObject d=p.getJSONObject("data").getJSONObject("instant").getJSONObject("details");
+            double t=d.optDouble("air_temperature");
+            double w=d.optDouble("wind_speed");
+            double[] v=days.get(key);
+            if(v==null){v=new double[]{t,t,w};days.put(key,v);labels.put(key,dayFmt.format(dt).toUpperCase(Locale.UK));}
+            else{v[0]=Math.min(v[0],t);v[1]=Math.max(v[1],t);v[2]=Math.max(v[2],w);}
+        }
+        StringBuilder out=new StringBuilder();
+        int n=0;
+        for(String key:days.keySet()){
+            if(n++>=5)break;
+            double[] v=days.get(key);
+            out.append(String.format(Locale.US,"%-12s  LOW %7s   HIGH %7s   WIND %4.1f m/s\n",
+                labels.get(key),temperatureLabel(v[0]),temperatureLabel(v[1]),v[2]));
+        }
+        return out.toString();
+    }
+
+    private String buildFiveDayFromOpenMeteo(JSONObject root) {
+        return "Daily outlook supplied from hourly model data.\nUse MET Norway mode for full five-day summaries when available.";
     }
 
     private String temperatureLabel(double celsius) {
@@ -532,8 +590,12 @@ public class FireMainActivity extends Activity {
     }
 
     static class WeatherDisplay {
-        final String current,forecast;
-        WeatherDisplay(String current,String forecast){this.current=current;this.forecast=forecast;}
+        final String current,forecast,fiveDay;
+        final double windDirection,windSpeed,humidity,cloud;
+        WeatherDisplay(String current,String forecast,String fiveDay,double windDirection,double windSpeed,double humidity,double cloud){
+            this.current=current;this.forecast=forecast;this.fiveDay=fiveDay;
+            this.windDirection=windDirection;this.windSpeed=windSpeed;this.humidity=humidity;this.cloud=cloud;
+        }
     }
 
     private String weatherCode(int code) {
@@ -557,7 +619,7 @@ public class FireMainActivity extends Activity {
         page.setBackgroundColor(BG);
 
         AnalogClockView analog = new AnalogClockView(this);
-        LinearLayout.LayoutParams analogLp = new LinearLayout.LayoutParams(0, -1, 6f);
+        LinearLayout.LayoutParams analogLp = new LinearLayout.LayoutParams(0, -1, 5.5f);
         analogLp.setMargins(0, 0, dp(8), 0);
         page.addView(analog, analogLp);
 
@@ -568,8 +630,8 @@ public class FireMainActivity extends Activity {
         info.setBackgroundColor(PANEL);
 
         info.addView(text("LOCAL TIME", 12, DIM));
-        timeClock = text("", 46, GREEN);
-        timeDate = text("", 18, TEXT);
+        timeClock = text("", 64, GREEN);
+        timeDate = text("", 22, TEXT);
         TextView localZone = text("", 12, CYAN);
         TextView calendarInfo = text("", 12, DIM);
         timeZones = text("", 15, TEXT);
@@ -584,7 +646,7 @@ public class FireMainActivity extends Activity {
         info.addView(timeZones);
 
         infoScroll.addView(info);
-        page.addView(infoScroll, new LinearLayout.LayoutParams(0, -1, 4f));
+        page.addView(infoScroll, new LinearLayout.LayoutParams(0, -1, 4.5f));
         pageHost.addView(page);
 
         clockTick = new Runnable() {
@@ -609,6 +671,8 @@ public class FireMainActivity extends Activity {
                 timeZones.setText(
                     zoneLine("UTC", "UTC", now, h24) + "\n\n" +
                     zoneLine("NEW YORK", "America/New_York", now, h24) + "\n\n" +
+                    zoneLine("CHICAGO", "America/Chicago", now, h24) + "\n\n" +
+                    zoneLine("LOS ANGELES", "America/Los_Angeles", now, h24) + "\n\n" +
                     zoneLine("TOKYO", "Asia/Tokyo", now, h24) + "\n\n" +
                     zoneLine("SYDNEY", "Australia/Sydney", now, h24)
                 );
@@ -660,18 +724,19 @@ public class FireMainActivity extends Activity {
         theme.setSelection(themeIndex);
         page.addView(theme);
 
-        page.addView(text("UNITS",13,DIM));
-        CheckBox milesBox=new CheckBox(this);
-        milesBox.setText("Distance in miles (off = kilometres)");
-        milesBox.setTextColor(TEXT);
-        milesBox.setChecked(prefs.getBoolean("miles",false));
-        page.addView(milesBox);
+        page.addView(text("DISPLAY UNITS",13,DIM));
 
-        CheckBox fahrenheitBox=new CheckBox(this);
-        fahrenheitBox.setText("Temperature in °F (off = °C)");
-        fahrenheitBox.setTextColor(TEXT);
-        fahrenheitBox.setChecked(prefs.getBoolean("fahrenheit",false));
-        page.addView(fahrenheitBox);
+        final String[] distanceUnits={"Kilometres (km)","Miles (mi)"};
+        Spinner distanceUnit=new Spinner(this);
+        distanceUnit.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,distanceUnits));
+        distanceUnit.setSelection(prefs.getBoolean("miles",false)?1:0);
+        page.addView(distanceUnit);
+
+        final String[] tempUnits={"Celsius (°C)","Fahrenheit (°F)"};
+        Spinner temperatureUnit=new Spinner(this);
+        temperatureUnit.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,tempUnits));
+        temperatureUnit.setSelection(prefs.getBoolean("fahrenheit",false)?1:0);
+        page.addView(temperatureUnit);
 
         page.addView(text("RADAR STYLE",13,DIM));
         final String[] styleIds={"classic","tactical","pulse","dual","sonar","atc"};
@@ -712,6 +777,24 @@ public class FireMainActivity extends Activity {
         });
         page.addView(rangeLabel);page.addView(range);
 
+        page.addView(text("ALERT / DETECTION RANGE",13,DIM));
+        CheckBox alertEnabled=new CheckBox(this);
+        alertEnabled.setText("Show orange detection range");
+        alertEnabled.setTextColor(TEXT);
+        alertEnabled.setChecked(prefs.getBoolean("alertEnabled",true));
+        page.addView(alertEnabled);
+
+        SeekBar alertRange=new SeekBar(this);
+        alertRange.setMax(315);
+        alertRange.setProgress(Math.max(0,prefs.getInt("alertRange",10)-5));
+        TextView alertLabel=text("Orange range: "+distanceLabel(prefs.getInt("alertRange",10)),13,AMBER);
+        alertRange.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar s,int p,boolean user){alertLabel.setText("Orange range: "+distanceLabel(p+5));}
+            public void onStartTrackingTouch(SeekBar s){} public void onStopTrackingTouch(SeekBar s){}
+        });
+        page.addView(alertLabel);
+        page.addView(alertRange);
+
         SeekBar refresh=new SeekBar(this);
         refresh.setMax(290);
         refresh.setProgress(prefs.getInt("refresh",30)-10);
@@ -738,8 +821,10 @@ public class FireMainActivity extends Activity {
                     .putInt("range",range.getProgress()+5)
                     .putInt("refresh",refresh.getProgress()+10)
                     .putBoolean("clock24",clock24.isChecked())
-                    .putBoolean("miles",milesBox.isChecked())
-                    .putBoolean("fahrenheit",fahrenheitBox.isChecked())
+                    .putBoolean("miles",distanceUnit.getSelectedItemPosition()==1)
+                    .putBoolean("fahrenheit",temperatureUnit.getSelectedItemPosition()==1)
+                    .putBoolean("alertEnabled",alertEnabled.isChecked())
+                    .putInt("alertRange",alertRange.getProgress()+5)
                     .putBoolean("trails",trails.isChecked())
                     .putString("radarStyle",styleIds[style.getSelectedItemPosition()])
                     .putInt("orientation",orientation.getSelectedItemPosition()*90)
@@ -833,6 +918,44 @@ public class FireMainActivity extends Activity {
         io.shutdownNow();super.onDestroy();
     }
 
+    public static class WeatherCompassView extends View {
+        private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private double direction=Double.NaN,wind=Double.NaN,humidity=Double.NaN,cloud=Double.NaN;
+        WeatherCompassView(Context c){super(c);paint.setTypeface(Typeface.MONOSPACE);setBackgroundColor(PANEL);}
+        void setWind(double direction,double wind,double humidity,double cloud){
+            this.direction=direction;this.wind=wind;this.humidity=humidity;this.cloud=cloud;invalidate();
+        }
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);
+            float cx=getWidth()*.28f,cy=getHeight()/2f,r=Math.min(getHeight()*.38f,getWidth()*.22f);
+            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(3);paint.setColor(Color.argb(120,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+            canvas.drawCircle(cx,cy,r,paint);canvas.drawCircle(cx,cy,r*.65f,paint);
+            for(int i=0;i<32;i++){
+                double a=i*Math.PI/16-Math.PI/2;
+                float inner=r*(i%8==0?.80f:.92f);
+                canvas.drawLine((float)(cx+Math.cos(a)*inner),(float)(cy+Math.sin(a)*inner),(float)(cx+Math.cos(a)*r),(float)(cy+Math.sin(a)*r),paint);
+            }
+            paint.setStyle(Paint.Style.FILL);paint.setTextAlign(Paint.Align.CENTER);paint.setTextSize(18);paint.setColor(GREEN);
+            canvas.drawText("N",cx,cy-r-8,paint);canvas.drawText("S",cx,cy+r+20,paint);canvas.drawText("W",cx-r-18,cy+6,paint);canvas.drawText("E",cx+r+18,cy+6,paint);
+            if(!Double.isNaN(direction)){
+                double a=Math.toRadians(direction-90);
+                paint.setStrokeWidth(6);paint.setColor(AMBER);paint.setStyle(Paint.Style.STROKE);
+                canvas.drawLine(cx,cy,(float)(cx+Math.cos(a)*r*.72f),(float)(cy+Math.sin(a)*r*.72f),paint);
+            }
+            paint.setStyle(Paint.Style.FILL);paint.setTextAlign(Paint.Align.LEFT);paint.setTextSize(18);paint.setColor(TEXT);
+            float x=getWidth()*.57f,y=45;
+            canvas.drawText("WIND FROM  "+compass(direction),x,y,paint);y+=34;
+            canvas.drawText("SPEED      "+(Double.isNaN(wind)?"--":String.format(Locale.US,"%.1f",wind)),x,y,paint);y+=34;
+            canvas.drawText("HUMIDITY   "+(Double.isNaN(humidity)?"--":String.format(Locale.US,"%.0f%%",humidity)),x,y,paint);y+=34;
+            canvas.drawText("CLOUD      "+(Double.isNaN(cloud)?"--":String.format(Locale.US,"%.0f%%",cloud)),x,y,paint);
+        }
+        private String compass(double d){
+            if(Double.isNaN(d))return "--";
+            String[] p={"N","NE","E","SE","S","SW","W","NW"};
+            return p[((int)Math.round(((d%360)+360)%360/45.0))%8];
+        }
+    }
+
     public static class AnalogClockView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Calendar time = Calendar.getInstance();
@@ -883,9 +1006,9 @@ public class FireMainActivity extends Activity {
             int minute = time.get(Calendar.MINUTE);
             int second = time.get(Calendar.SECOND);
 
-            drawHand(canvas, cx, cy, radius * .52f, (hour + minute / 60f) * 30f, 7f, AMBER);
-            drawHand(canvas, cx, cy, radius * .73f, minute * 6f + second * .1f, 5f, TEXT);
-            drawHand(canvas, cx, cy, radius * .82f, second * 6f, 2f, GREEN);
+            drawHand(canvas, cx, cy, radius * .50f, (hour + minute / 60f) * 30f, 11f, AMBER);
+            drawHand(canvas, cx, cy, radius * .70f, minute * 6f + second * .1f, 8f, TEXT);
+            drawHand(canvas, cx, cy, radius * .80f, second * 6f, 3f, GREEN);
 
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(GREEN);
@@ -900,12 +1023,16 @@ public class FireMainActivity extends Activity {
                 canvas.drawText(String.valueOf(n),(float)(cx+Math.cos(a)*nr),(float)(cy+Math.sin(a)*nr+8f),paint);
             }
 
-            // A radar-like seconds trace gives the clock some of the native app character.
-            double sa=Math.toRadians(second*6-90);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(2f);
-            paint.setColor(Color.argb(95,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
-            canvas.drawLine(cx,cy,(float)(cx+Math.cos(sa)*radius),(float)(cy+Math.sin(sa)*radius),paint);
+            // Native-style 34-layer phosphor seconds sweep.
+            for(int i=34;i>=0;i--){
+                double deg=second*6-i*1.15;
+                double sa=Math.toRadians(deg-90);
+                int alpha=(int)(8+(34-i)*5.4);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(i==0?3f:2f);
+                paint.setColor(Color.argb(Math.min(190,alpha),Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+                canvas.drawLine(cx,cy,(float)(cx+Math.cos(sa)*radius*.84f),(float)(cy+Math.sin(sa)*radius*.84f),paint);
+            }
         }
 
         private void drawHand(Canvas canvas, float cx, float cy, float length, float degrees, float width, int color) {
@@ -979,6 +1106,8 @@ public class FireMainActivity extends Activity {
         private int orientation=0;
         private boolean showTrails=true;
         private boolean miles=false;
+        private boolean alertEnabled=true;
+        private int alertRange=10;
         private String style="classic";
         private String selected=null;
         private OnAircraftTapListener listener;
@@ -995,6 +1124,7 @@ public class FireMainActivity extends Activity {
         void setOrientation(int degrees){orientation=((degrees%360)+360)%360;invalidate();}
         void setTrails(boolean value){showTrails=value;invalidate();}
         void setMiles(boolean value){miles=value;invalidate();}
+        void setAlertRange(boolean enabled,int km){alertEnabled=enabled;alertRange=km;invalidate();}
         void setSelected(String hex){selected=hex;invalidate();}
 
         void setAircraft(List<Aircraft> a,int r){
@@ -1061,6 +1191,21 @@ public class FireMainActivity extends Activity {
                 String label=miles?String.format(Locale.US,"%.0f mi",ringKm/1.609344):String.format(Locale.US,"%.0f km",ringKm);
                 float rr=rad*i/4f;
                 c.drawText(label,cx+6,cy-rr+17,p);
+            }
+
+            if(alertEnabled && alertRange>0){
+                float ar=rad*Math.min(1f,alertRange/(float)Math.max(1,range));
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(3f);
+                p.setColor(AMBER);
+                PathEffect dash=new DashPathEffect(new float[]{12f,8f},0);
+                p.setPathEffect(dash);
+                if(square)c.drawRect(cx-ar,cy-ar,cx+ar,cy+ar,p);else c.drawCircle(cx,cy,ar,p);
+                p.setPathEffect(null);
+                p.setStyle(Paint.Style.FILL);
+                p.setTextSize(15f);
+                p.setTextAlign(Paint.Align.LEFT);
+                c.drawText("ALERT "+(miles?String.format(Locale.US,"%.0f mi",alertRange/1.609344):alertRange+" km"),cx+8,cy-ar+18,p);
             }
 
             drawSweep(c,cx,cy,rad,now,square);
