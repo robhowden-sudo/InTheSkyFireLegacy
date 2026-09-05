@@ -25,6 +25,11 @@ import java.util.concurrent.Executors;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
+import java.security.KeyStore;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
 
 public class FireMainActivity extends Activity {
     private static final int BG = Color.rgb(2,7,5);
@@ -47,6 +52,7 @@ public class FireMainActivity extends Activity {
     private TextView weatherBody, weatherStatus;
     private TextView timeClock, timeDate, timeZones;
     private Runnable radarTick, clockTick;
+    private SSLSocketFactory weatherSslFactory;
     private List<Aircraft> aircraft = new ArrayList<Aircraft>();
 
     @Override public void onCreate(Bundle state) {
@@ -64,6 +70,26 @@ public class FireMainActivity extends Activity {
             sc.init(null, null, null);
             HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
         } catch (Exception ignored) {}
+
+        try {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            InputStream in = getResources().openRawResource(R.raw.isrgrootx1);
+            Certificate ca = cf.generateCertificate(in);
+            in.close();
+
+            KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());
+            store.load(null, null);
+            store.setCertificateEntry("isrg-root-x1", ca);
+
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(store);
+
+            SSLContext weather = SSLContext.getInstance("TLSv1.2");
+            weather.init(null, tmf.getTrustManagers(), null);
+            weatherSslFactory = weather.getSocketFactory();
+        } catch (Exception ignored) {
+            weatherSslFactory = null;
+        }
     }
 
     private TextView text(String s, int sp, int color) {
@@ -120,6 +146,7 @@ public class FireMainActivity extends Activity {
 
     private void showRadar() {
         clearPage();
+
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setBackgroundColor(BG);
@@ -129,35 +156,50 @@ public class FireMainActivity extends Activity {
         TextView status = text("LIVE AIRCRAFT", 11, DIM);
         Button refresh = button("SCAN NOW");
         refresh.setOnClickListener(v -> refreshRadar(status));
-        controls.addView(status, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        controls.addView(refresh, new LinearLayout.LayoutParams(dp(120), dp(48)));
+        controls.addView(status, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        controls.addView(refresh, new LinearLayout.LayoutParams(dp(118), dp(46)));
         page.addView(controls);
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.HORIZONTAL);
+        body.setWeightSum(10f);
 
         radarView = new RadarView(this);
         radarView.setOnAircraftTapListener(this::selectAircraft);
-        page.addView(radarView, new LinearLayout.LayoutParams(-1, 0, 1f));
+        LinearLayout.LayoutParams radarLp = new LinearLayout.LayoutParams(0, -1, 7f);
+        radarLp.setMargins(dp(6), dp(2), dp(4), dp(6));
+        body.addView(radarView, radarLp);
 
-        aircraftCard = new LinearLayout(this);
-        aircraftCard.setOrientation(LinearLayout.HORIZONTAL);
-        aircraftCard.setPadding(dp(8),dp(8),dp(8),dp(8));
-        aircraftCard.setBackgroundColor(PANEL);
+        ScrollView dataScroll = new ScrollView(this);
+        dataScroll.setFillViewport(true);
+        LinearLayout dataPanel = new LinearLayout(this);
+        dataPanel.setOrientation(LinearLayout.VERTICAL);
+        dataPanel.setPadding(dp(8), dp(8), dp(8), dp(8));
+        dataPanel.setBackgroundColor(PANEL);
+
+        dataPanel.addView(text("SELECTED AIRCRAFT", 12, DIM));
+
         aircraftImage = new ImageView(this);
         aircraftImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
         aircraftImage.setBackgroundColor(Color.rgb(3,12,8));
-        aircraftCard.addView(aircraftImage, new LinearLayout.LayoutParams(dp(150), dp(120)));
+        dataPanel.addView(aircraftImage, new LinearLayout.LayoutParams(-1, dp(150)));
 
-        LinearLayout detail = new LinearLayout(this);
-        detail.setOrientation(LinearLayout.VERTICAL);
-        aircraftTitle = text("TAP AN AIRCRAFT", 15, GREEN);
-        aircraftDetails = text("Select a radar contact for aircraft data.", 11, TEXT);
-        aircraftReference = text("", 10, DIM);
-        detail.addView(aircraftTitle);
-        detail.addView(aircraftDetails);
-        detail.addView(aircraftReference);
-        aircraftCard.addView(detail, new LinearLayout.LayoutParams(0, -2, 1f));
-        page.addView(aircraftCard, new LinearLayout.LayoutParams(-1, dp(145)));
+        aircraftTitle = text("TAP A RADAR CONTACT", 16, GREEN);
+        aircraftDetails = text("Aircraft broadcast data and range information will appear here.", 12, TEXT);
+        aircraftReference = text("", 11, DIM);
+        dataPanel.addView(aircraftTitle);
+        dataPanel.addView(aircraftDetails);
+        dataPanel.addView(text("AIRCRAFT REFERENCE", 11, CYAN));
+        dataPanel.addView(aircraftReference);
 
+        dataScroll.addView(dataPanel);
+        LinearLayout.LayoutParams dataLp = new LinearLayout.LayoutParams(0, -1, 3f);
+        dataLp.setMargins(dp(4), dp(2), dp(6), dp(6));
+        body.addView(dataScroll, dataLp);
+
+        page.addView(body, new LinearLayout.LayoutParams(-1, 0, 1f));
         pageHost.addView(page);
+
         refreshRadar(status);
         scheduleRadar(status);
     }
@@ -299,28 +341,78 @@ public class FireMainActivity extends Activity {
 
     private void showTime() {
         clearPage();
-        LinearLayout page=new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL);page.setGravity(Gravity.CENTER_HORIZONTAL);page.setBackgroundColor(BG);
-        timeClock=text("",52,GREEN);timeClock.setGravity(Gravity.CENTER);
-        timeDate=text("",18,TEXT);timeDate.setGravity(Gravity.CENTER);
-        timeZones=text("",15,CYAN);
-        page.addView(timeClock,new LinearLayout.LayoutParams(-1,dp(100)));
-        page.addView(timeDate);
-        page.addView(timeZones);
+
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.HORIZONTAL);
+        page.setWeightSum(10f);
+        page.setPadding(dp(10), dp(10), dp(10), dp(10));
+        page.setBackgroundColor(BG);
+
+        AnalogClockView analog = new AnalogClockView(this);
+        LinearLayout.LayoutParams analogLp = new LinearLayout.LayoutParams(0, -1, 6f);
+        analogLp.setMargins(0, 0, dp(8), 0);
+        page.addView(analog, analogLp);
+
+        ScrollView infoScroll = new ScrollView(this);
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(dp(12), dp(10), dp(12), dp(10));
+        info.setBackgroundColor(PANEL);
+
+        info.addView(text("LOCAL TIME", 12, DIM));
+        timeClock = text("", 46, GREEN);
+        timeDate = text("", 18, TEXT);
+        TextView localZone = text("", 12, CYAN);
+        TextView calendarInfo = text("", 12, DIM);
+        timeZones = text("", 15, TEXT);
+
+        info.addView(timeClock);
+        info.addView(timeDate);
+        info.addView(localZone);
+        info.addView(calendarInfo);
+        info.addView(text("WORLD CLOCKS", 12, DIM));
+        info.addView(timeZones);
+
+        infoScroll.addView(info);
+        page.addView(infoScroll, new LinearLayout.LayoutParams(0, -1, 4f));
         pageHost.addView(page);
-        clockTick=new Runnable(){public void run(){
-            Date now=new Date();
-            SimpleDateFormat tf=new SimpleDateFormat(prefs.getBoolean("clock24",true)?"HH:mm:ss":"hh:mm:ss a",Locale.UK);
-            SimpleDateFormat df=new SimpleDateFormat("EEEE, d MMMM yyyy",Locale.UK);
-            timeClock.setText(tf.format(now));timeDate.setText(df.format(now));
-            timeZones.setText(zoneLine("UTC","UTC",now)+"\n"+zoneLine("NEW YORK","America/New_York",now)+"\n"+zoneLine("TOKYO","Asia/Tokyo",now));
-            ui.postDelayed(this,1000);
-        }};
+
+        clockTick = new Runnable() {
+            public void run() {
+                Date now = new Date();
+                boolean h24 = prefs.getBoolean("clock24", true);
+                SimpleDateFormat tf = new SimpleDateFormat(h24 ? "HH:mm:ss" : "hh:mm:ss a", Locale.UK);
+                SimpleDateFormat df = new SimpleDateFormat("EEEE, d MMMM yyyy", Locale.UK);
+                SimpleDateFormat zf = new SimpleDateFormat("z", Locale.UK);
+
+                Calendar cal = Calendar.getInstance();
+                timeClock.setText(tf.format(now));
+                timeDate.setText(df.format(now));
+                localZone.setText(TimeZone.getDefault().getID() + "  //  " + zf.format(now));
+                calendarInfo.setText(
+                    "DAY " + cal.get(Calendar.DAY_OF_YEAR) + " OF " + cal.getActualMaximum(Calendar.DAY_OF_YEAR) +
+                    "   //   WEEK " + cal.get(Calendar.WEEK_OF_YEAR) + "\n" +
+                    "LOCATION  " + locationLabel() + "   " +
+                    String.format(Locale.US, "%.4f°, %.4f°", currentLat(), currentLon())
+                );
+
+                timeZones.setText(
+                    zoneLine("UTC", "UTC", now, h24) + "\n\n" +
+                    zoneLine("NEW YORK", "America/New_York", now, h24) + "\n\n" +
+                    zoneLine("TOKYO", "Asia/Tokyo", now, h24) + "\n\n" +
+                    zoneLine("SYDNEY", "Australia/Sydney", now, h24)
+                );
+                analog.setTime(now);
+                ui.postDelayed(this, 1000);
+            }
+        };
         clockTick.run();
     }
 
-    private String zoneLine(String label,String zone,Date now){
-        SimpleDateFormat f=new SimpleDateFormat("HH:mm  z",Locale.UK);f.setTimeZone(TimeZone.getTimeZone(zone));
-        return label+"   "+f.format(now);
+    private String zoneLine(String label, String zone, Date now, boolean h24) {
+        SimpleDateFormat f = new SimpleDateFormat(h24 ? "HH:mm:ss  z" : "hh:mm:ss a  z", Locale.UK);
+        f.setTimeZone(TimeZone.getTimeZone(zone));
+        return label + "\n" + f.format(now);
     }
 
     private void showSettings() {
@@ -390,6 +482,9 @@ public class FireMainActivity extends Activity {
 
     private JSONObject getJson(String url) throws Exception {
         HttpsURLConnection c=(HttpsURLConnection)new URL(url).openConnection();
+        if (url.startsWith("https://api.met.no/") && weatherSslFactory != null) {
+            c.setSSLSocketFactory(weatherSslFactory);
+        }
         c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("Accept","application/json");
         c.setRequestProperty("User-Agent","InTheSky-FireHD-Legacy/1.0");
         try{
@@ -424,6 +519,75 @@ public class FireMainActivity extends Activity {
     @Override protected void onDestroy(){
         if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);
         io.shutdownNow();super.onDestroy();
+    }
+
+    public static class AnalogClockView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Calendar time = Calendar.getInstance();
+
+        AnalogClockView(Context context) {
+            super(context);
+            paint.setTypeface(Typeface.MONOSPACE);
+            setBackgroundColor(PANEL);
+        }
+
+        void setTime(Date date) {
+            time.setTime(date);
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            float radius = Math.min(getWidth(), getHeight()) * 0.40f;
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(4f);
+            paint.setColor(GREEN);
+            canvas.drawCircle(cx, cy, radius, paint);
+
+            for (int i = 0; i < 60; i++) {
+                double a = Math.toRadians(i * 6 - 90);
+                float outerX = (float)(cx + Math.cos(a) * radius);
+                float outerY = (float)(cy + Math.sin(a) * radius);
+                float inner = radius - (i % 5 == 0 ? 18f : 9f);
+                float innerX = (float)(cx + Math.cos(a) * inner);
+                float innerY = (float)(cy + Math.sin(a) * inner);
+                paint.setColor(i % 5 == 0 ? CYAN : Color.rgb(35,90,62));
+                paint.setStrokeWidth(i % 5 == 0 ? 3f : 1f);
+                canvas.drawLine(innerX, innerY, outerX, outerY, paint);
+            }
+
+            int hour = time.get(Calendar.HOUR);
+            int minute = time.get(Calendar.MINUTE);
+            int second = time.get(Calendar.SECOND);
+
+            drawHand(canvas, cx, cy, radius * .52f, (hour + minute / 60f) * 30f, 7f, AMBER);
+            drawHand(canvas, cx, cy, radius * .73f, minute * 6f + second * .1f, 5f, TEXT);
+            drawHand(canvas, cx, cy, radius * .82f, second * 6f, 2f, GREEN);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(GREEN);
+            canvas.drawCircle(cx, cy, 7f, paint);
+
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(24f);
+            paint.setColor(DIM);
+            canvas.drawText("12", cx, cy - radius + 35f, paint);
+            canvas.drawText("3", cx + radius - 24f, cy + 8f, paint);
+            canvas.drawText("6", cx, cy + radius - 18f, paint);
+            canvas.drawText("9", cx - radius + 24f, cy + 8f, paint);
+        }
+
+        private void drawHand(Canvas canvas, float cx, float cy, float length, float degrees, float width, int color) {
+            double a = Math.toRadians(degrees - 90);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeWidth(width);
+            paint.setColor(color);
+            canvas.drawLine(cx, cy, (float)(cx + Math.cos(a) * length), (float)(cy + Math.sin(a) * length), paint);
+        }
     }
 
     static class Aircraft {
