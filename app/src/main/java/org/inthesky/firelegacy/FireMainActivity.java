@@ -33,12 +33,13 @@ import java.security.cert.CertificateFactory;
 
 public class FireMainActivity extends Activity {
     private static final int BG = Color.rgb(2,7,5);
-    private static final int PANEL = Color.rgb(6,19,13);
-    private static int GREEN = Color.rgb(79,255,159);
-    private static final int DIM = Color.rgb(97,169,129);
-    private static final int CYAN = Color.rgb(102,228,255);
-    private static final int AMBER = Color.rgb(255,194,92);
-    private static final int TEXT = Color.rgb(225,255,238);
+    private static int PANEL = Color.rgb(3,17,13);
+    private static int GREEN = Color.rgb(84,224,255);
+    private static int DIM = Color.rgb(66,142,151);
+    private static int CYAN = Color.rgb(84,224,255);
+    private static int AMBER = Color.rgb(255,191,64);
+    private static int TEXT = Color.rgb(232,255,255);
+    private static int BORDER = Color.rgb(24,113,123);
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(3);
@@ -50,6 +51,7 @@ public class FireMainActivity extends Activity {
     private ImageView aircraftImage;
     private TextView aircraftTitle, aircraftDetails, aircraftReference;
     private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay, weatherWarnings, weatherLocalConditions, weatherCity;
+    private LinearLayout fiveDayGrid, worldClocksBox;
     private WeatherTrendView temperatureTrendView, humidityTrendView, windTrendView, pressureTrendView, rainTrendView;
     private TextView timeClock, timeDate, timeZones, launchSummary;
     private Button launchMoreButton;
@@ -104,16 +106,34 @@ public class FireMainActivity extends Activity {
     }
 
     private void applyTheme(String theme) {
-        if ("AMBER".equals(theme)) GREEN = Color.rgb(255,194,92);
-        else if ("CYAN".equals(theme)) GREEN = Color.rgb(102,228,255);
-        else if ("RED".equals(theme)) GREEN = Color.rgb(255,102,119);
-        else if ("VIOLET".equals(theme)) GREEN = Color.rgb(183,140,255);
-        else GREEN = Color.rgb(79,255,159);
+        PANEL = Color.rgb(3,17,13);
+        TEXT = Color.rgb(232,255,255);
+        AMBER = Color.rgb(255,191,64);
+        if ("AMBER".equals(theme)) {
+            GREEN=Color.rgb(255,191,64); CYAN=Color.rgb(255,214,110); DIM=Color.rgb(170,133,69); BORDER=Color.rgb(131,94,28);
+        } else if ("CYAN".equals(theme)) {
+            GREEN=Color.rgb(84,224,255); CYAN=Color.rgb(84,224,255); DIM=Color.rgb(66,142,151); BORDER=Color.rgb(24,113,123);
+        } else if ("RED".equals(theme)) {
+            GREEN=Color.rgb(255,92,109); CYAN=Color.rgb(255,128,139); DIM=Color.rgb(153,76,83); BORDER=Color.rgb(121,45,54);
+        } else if ("VIOLET".equals(theme)) {
+            GREEN=Color.rgb(188,139,255); CYAN=Color.rgb(208,174,255); DIM=Color.rgb(125,91,168); BORDER=Color.rgb(90,60,126);
+        } else {
+            GREEN=Color.rgb(84,224,255); CYAN=Color.rgb(84,224,255); DIM=Color.rgb(66,142,151); BORDER=Color.rgb(24,113,123);
+        }
+    }
+
+    private GradientDrawable panelBackground(boolean strong) {
+        GradientDrawable g=new GradientDrawable();
+        g.setColor(strong?Color.rgb(2,14,11):PANEL);
+        g.setStroke(dp(strong?2:1), strong?CYAN:BORDER);
+        g.setCornerRadius(dp(3));
+        return g;
     }
 
     private TextView text(String s, int sp, int color) {
         TextView v = new TextView(this);
         v.setText(s); v.setTextSize(sp); v.setTextColor(color);
+        v.setTypeface(Typeface.MONOSPACE);
         v.setPadding(dp(8),dp(6),dp(8),dp(6));
         return v;
     }
@@ -121,7 +141,7 @@ public class FireMainActivity extends Activity {
     private Button button(String s) {
         Button b = new Button(this);
         b.setText(s); b.setTextSize(12); b.setTextColor(TEXT);
-        b.setBackgroundColor(PANEL);
+        b.setBackground(panelBackground(true));
         b.setAllCaps(false);
         return b;
     }
@@ -133,7 +153,7 @@ public class FireMainActivity extends Activity {
 
         TextView header = text("IN THE SKY  //  FIRE HD LEGACY", 18, GREEN);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setBackgroundColor(PANEL);
+        header.setBackground(panelBackground(true));
         root.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
 
         pageHost = new FrameLayout(this);
@@ -141,7 +161,7 @@ public class FireMainActivity extends Activity {
 
         LinearLayout nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.HORIZONTAL);
-        nav.setBackgroundColor(PANEL);
+        nav.setBackground(panelBackground(false));
         String[] labels = {"RADAR","WEATHER","TIME","SETTINGS"};
         for (String label : labels) {
             Button b = button(label);
@@ -251,9 +271,9 @@ public class FireMainActivity extends Activity {
         LinearLayout dataPanel = new LinearLayout(this);
         dataPanel.setOrientation(LinearLayout.VERTICAL);
         dataPanel.setPadding(dp(8), dp(8), dp(8), dp(8));
-        dataPanel.setBackgroundColor(PANEL);
+        dataPanel.setBackground(panelBackground(true));
 
-        dataPanel.addView(text("SELECTED AIRCRAFT", 12, DIM));
+        dataPanel.addView(text("SELECTED CONTACT // AUTO ON ALERT ENTRY", 12, CYAN));
 
         aircraftImage = new ImageView(this);
         aircraftImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -331,9 +351,14 @@ public class FireMainActivity extends Activity {
                     Set<String> now = new HashSet<String>();
                     for (Aircraft a : list) now.add(a.hex);
                     Aircraft entered = null;
-                    if (previousContacts != null && !sourceLabel.contains("CACHE")) {
+                    int alertKm=prefs.getInt("alertRange",10);
+                    boolean alertOn=prefs.getBoolean("alertEnabled",true);
+                    if (previousContacts != null && !sourceLabel.contains("CACHE") && alertOn) {
                         for (Aircraft a : list) {
-                            if (!previousContacts.contains(a.hex)) { entered = a; break; }
+                            if (!previousContacts.contains(a.hex) && a.distanceKm <= alertKm) {
+                                entered = a;
+                                break;
+                            }
                         }
                     }
                     if(!sourceLabel.contains("CACHE")) previousContacts = now;
@@ -536,7 +561,7 @@ public class FireMainActivity extends Activity {
         hero.setOrientation(LinearLayout.HORIZONTAL);
         hero.setGravity(Gravity.CENTER_VERTICAL);
         hero.setPadding(dp(16),dp(10),dp(16),dp(10));
-        hero.setBackgroundColor(PANEL);
+        hero.setBackground(panelBackground(true));
 
         weatherCurrent = text("LOADING CURRENT CONDITIONS…", 30, GREEN);
         weatherCurrent.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
@@ -581,11 +606,14 @@ public class FireMainActivity extends Activity {
         fiveTitle.setBackgroundColor(PANEL);
         right.addView(fiveTitle,new LinearLayout.LayoutParams(-1,dp(34)));
 
-        weatherFiveDay=text("Waiting for forecast data…",14,TEXT);
-        weatherFiveDay.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        weatherFiveDay.setBackgroundColor(Color.rgb(3,15,11));
-        weatherFiveDay.setPadding(dp(10),dp(8),dp(10),dp(8));
-        right.addView(weatherFiveDay,new LinearLayout.LayoutParams(-1,0,1.2f));
+        fiveDayGrid=new LinearLayout(this);
+        fiveDayGrid.setOrientation(LinearLayout.VERTICAL);
+        fiveDayGrid.setPadding(dp(6),dp(4),dp(6),dp(4));
+        fiveDayGrid.setBackground(panelBackground(true));
+        right.addView(fiveDayGrid,new LinearLayout.LayoutParams(-1,0,1.2f));
+        buildFiveDayHeader();
+        weatherFiveDay=text("",1,TEXT);
+        weatherFiveDay.setVisibility(View.GONE);
 
         TextView localTitle=text("LOCAL CONDITIONS",12,DIM);
         localTitle.setBackgroundColor(PANEL);
@@ -593,7 +621,7 @@ public class FireMainActivity extends Activity {
 
         weatherLocalConditions=text("Loading local conditions…",15,TEXT);
         weatherLocalConditions.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
-        weatherLocalConditions.setBackgroundColor(Color.rgb(3,15,11));
+        weatherLocalConditions.setBackground(panelBackground(true));
         weatherLocalConditions.setPadding(dp(12),dp(10),dp(12),dp(10));
         right.addView(weatherLocalConditions,new LinearLayout.LayoutParams(-1,0,1f));
 
@@ -602,7 +630,7 @@ public class FireMainActivity extends Activity {
         right.addView(warningTitle,new LinearLayout.LayoutParams(-1,dp(34)));
 
         weatherWarnings=text("Checking official warning feeds…",12,TEXT);
-        weatherWarnings.setBackgroundColor(Color.rgb(3,15,11));
+        weatherWarnings.setBackground(panelBackground(true));
         weatherWarnings.setPadding(dp(10),dp(8),dp(10),dp(8));
         right.addView(weatherWarnings,new LinearLayout.LayoutParams(-1,0,.65f));
 
@@ -663,7 +691,7 @@ public class FireMainActivity extends Activity {
                     weatherStatus.setText("WEATHER // "+locationLabel()+" // "+source);
                     weatherCity.setText("NEAREST CITY / TOWN // "+locationLabel().toUpperCase(Locale.UK));
                     weatherCurrent.setText(display.current);
-                    weatherFiveDay.setText(display.fiveDay);
+                    renderFiveDay(display.days);
                     weatherLocalConditions.setText(display.localConditions);
                     View heroIconView=pageHost.findViewWithTag("weatherHeroIcon");
                     if(heroIconView instanceof TextView)((TextView)heroIconView).setText(display.icon);
@@ -730,7 +758,7 @@ public class FireMainActivity extends Activity {
             "WIND       "+String.format(Locale.US,"%.1f m/s",wind)+"     PRESSURE "+(Double.isNaN(pressure)?"--":String.format(Locale.US,"%.1f hPa",pressure));
         double[] pHist=new double[Math.min(12,ts.length())];
         for(int i=0;i<pHist.length;i++) pHist[i]=ts.getJSONObject(i).getJSONObject("data").getJSONObject("instant").getJSONObject("details").optDouble("air_pressure_at_sea_level",Double.NaN);
-        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,cloud,local,icon,prefs.getBoolean("fahrenheit",false)?"°F":"°C",pHist);
+        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,cloud,local,icon,prefs.getBoolean("fahrenheit",false)?"°F":"°C",pHist,buildForecastDaysFromMet(ts));
     }
 
     private WeatherDisplay parseOpenMeteo(JSONObject root) throws Exception {
@@ -763,7 +791,7 @@ public class FireMainActivity extends Activity {
             "HUMIDITY   "+String.format(Locale.US,"%.1f%%",hum)+"     CLOUD   --\n"+
             "WIND       "+String.format(Locale.US,"%.1f km/h",wind)+"     PRESSURE --";
         double[] pHist=new double[12];Arrays.fill(pHist,Double.NaN);
-        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,Double.NaN,local,icon,prefs.getBoolean("fahrenheit",false)?"°F":"°C",pHist);
+        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,Double.NaN,local,icon,prefs.getBoolean("fahrenheit",false)?"°F":"°C",pHist,buildForecastDaysFromOpenMeteo(root));
     }
 
     private String buildFiveDayFromMet(JSONArray ts) throws Exception {
@@ -865,11 +893,12 @@ public class FireMainActivity extends Activity {
         final String current,forecast,fiveDay,localConditions,icon,tempUnit;
         final double windDirection,windSpeed,humidity,cloud;
         final double[] pressureHistory;
+        final ArrayList<ForecastDay> days;
         WeatherDisplay(String current,String forecast,String fiveDay,double windDirection,double windSpeed,double humidity,double cloud,
-                       String localConditions,String icon,String tempUnit,double[] pressureHistory){
+                       String localConditions,String icon,String tempUnit,double[] pressureHistory,ArrayList<ForecastDay> days){
             this.current=current;this.forecast=forecast;this.fiveDay=fiveDay;
             this.windDirection=windDirection;this.windSpeed=windSpeed;this.humidity=humidity;this.cloud=cloud;
-            this.localConditions=localConditions;this.icon=icon;this.tempUnit=tempUnit;this.pressureHistory=pressureHistory;
+            this.localConditions=localConditions;this.icon=icon;this.tempUnit=tempUnit;this.pressureHistory=pressureHistory;this.days=days;
         }
     }
 
@@ -915,10 +944,22 @@ public class FireMainActivity extends Activity {
         info.addView(timeDate);
         info.addView(localZone);
         info.addView(calendarInfo);
-        TextView divider=text("────────  WORLD CLOCKS  ────────",12,GREEN);
-        divider.setGravity(Gravity.CENTER);
-        info.addView(divider);
-        info.addView(timeZones);
+        Button worldToggle=button("WORLD CLOCKS  ▾");
+        info.addView(worldToggle,new LinearLayout.LayoutParams(-1,dp(42)));
+        worldClocksBox=new LinearLayout(this);
+        worldClocksBox.setOrientation(LinearLayout.VERTICAL);
+        worldClocksBox.setBackground(panelBackground(true));
+        worldClocksBox.addView(timeZones);
+        info.addView(worldClocksBox);
+        boolean worldOpen=prefs.getBoolean("worldClocksOpen",false);
+        worldClocksBox.setVisibility(worldOpen?View.VISIBLE:View.GONE);
+        worldToggle.setText(worldOpen?"WORLD CLOCKS  ▴":"WORLD CLOCKS  ▾");
+        worldToggle.setOnClickListener(v -> {
+            boolean open=worldClocksBox.getVisibility()!=View.VISIBLE;
+            worldClocksBox.setVisibility(open?View.VISIBLE:View.GONE);
+            worldToggle.setText(open?"WORLD CLOCKS  ▴":"WORLD CLOCKS  ▾");
+            prefs.edit().putBoolean("worldClocksOpen",open).apply();
+        });
 
         TextView launchDivider=text("──────  UPCOMING ROCKET LAUNCHES  ──────",12,AMBER);
         launchDivider.setGravity(Gravity.CENTER);
@@ -1127,7 +1168,7 @@ public class FireMainActivity extends Activity {
 
         page.addView(text("THEME / ACCENT",13,DIM));
         final String[] themeIds={"PHOSPHOR","AMBER","CYAN","RED","VIOLET"};
-        final String[] themeLabels={"Phosphor Green","Amber","Ice Blue","Red Tactical","Violet"};
+        final String[] themeLabels={"Native Cyan / Teal","Amber Radar","Ice Cyan","Red Tactical","Violet Night"};
         Spinner theme=new Spinner(this);
         theme.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, themeLabels));
         int themeIndex=0;
