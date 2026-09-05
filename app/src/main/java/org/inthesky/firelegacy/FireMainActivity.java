@@ -120,7 +120,9 @@ public class FireMainActivity extends Activity {
 
     private GradientDrawable panelBackground(boolean strong) {
         GradientDrawable g=new GradientDrawable();
-        g.setColor(strong?PANEL_RAISED:PANEL);
+        int base=strong?PANEL_RAISED:PANEL;
+        int alpha=strong?218:192;
+        g.setColor(Color.argb(alpha,Color.red(base),Color.green(base),Color.blue(base)));
         g.setStroke(dp(1), strong?GREEN:BORDER);
         g.setCornerRadius(dp(5));
         return g;
@@ -235,16 +237,22 @@ public class FireMainActivity extends Activity {
         }
         rangePicker.setSelection(best, false);
         rangePicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            boolean first=true;
             public void onNothingSelected(AdapterView<?> parent) {}
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if(first){first=false;return;}
                 int displayRange=rangeValues[position];
                 int km=miles ? (int)Math.round(displayRange*1.609344) : displayRange;
                 km=Math.max(5,Math.min(320,km));
+                int oldKm=prefs.getInt("range",40);
+                if(km==oldKm) return;
+
                 prefs.edit().putInt("range",km).apply();
                 previousContacts=null;
-                if(radarView!=null) radarView.setMiles(miles);
+
+                if(radarView!=null){
+                    radarView.setMiles(miles);
+                    radarView.setDisplayRange(km);
+                }
+                status.setText("RANGE "+distanceLabel(km)+" // SCANNING…");
                 refreshRadar(status);
             }
         });
@@ -281,7 +289,7 @@ public class FireMainActivity extends Activity {
 
         aircraftImage = new ImageView(this);
         aircraftImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        aircraftImage.setBackgroundColor(Color.rgb(3,12,8));
+        aircraftImage.setBackgroundColor(Color.argb(218,3,12,8));
         dataPanel.addView(aircraftImage, new LinearLayout.LayoutParams(-1, dp(150)));
 
         aircraftTitle = text("TAP A RADAR CONTACT", 16, GREEN);
@@ -424,7 +432,7 @@ public class FireMainActivity extends Activity {
             empty(a.description)
         );
         aircraftReference.setText("Loading aircraft reference…");
-        aircraftImage.setImageDrawable(new ColorDrawable(Color.rgb(3,12,8)));
+        aircraftImage.setImageDrawable(new ColorDrawable(Color.argb(218,3,12,8)));
 
         io.execute(() -> {
             String meta = "";
@@ -603,7 +611,7 @@ public class FireMainActivity extends Activity {
         weatherCity = text("NEAREST CITY / TOWN // "+locationLabel().toUpperCase(Locale.UK), 14, CYAN);
         weatherCity.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
         weatherCity.setGravity(Gravity.CENTER);
-        weatherCity.setBackgroundColor(PANEL);
+        weatherCity.setBackgroundColor(Color.argb(196,Color.red(PANEL),Color.green(PANEL),Color.blue(PANEL)));
         right.addView(weatherCity,new LinearLayout.LayoutParams(-1,dp(48)));
 
         TextView fiveTitle=text("FIVE DAY FORECAST",12,DIM);
@@ -1101,7 +1109,7 @@ public class FireMainActivity extends Activity {
         info.addView(launchDivider);
 
         launchSummary=text("LOADING UPCOMING MISSIONS…",13,TEXT);
-        launchSummary.setBackgroundColor(Color.rgb(3,15,11));
+        launchSummary.setBackgroundColor(Color.argb(198,3,15,11));
         launchSummary.setPadding(dp(10),dp(10),dp(10),dp(10));
         info.addView(launchSummary);
 
@@ -1978,6 +1986,10 @@ public class FireMainActivity extends Activity {
             float cy = getHeight() / 2f;
             float radius = Math.min(getWidth(), getHeight()) * 0.445f;
 
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(184,Color.red(PANEL),Color.green(PANEL),Color.blue(PANEL)));
+            canvas.drawCircle(cx,cy,radius*1.12f,paint);
+
             paint.setStyle(Paint.Style.STROKE);
             paint.setColor(Color.argb(45,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
             paint.setStrokeWidth(12f);
@@ -2138,7 +2150,7 @@ public class FireMainActivity extends Activity {
         RadarView(Context c){
             super(c);
             p.setTypeface(Typeface.MONOSPACE);
-            setBackgroundColor(BG);
+            setBackgroundColor(Color.TRANSPARENT);
         }
 
         void setOnAircraftTapListener(OnAircraftTapListener l){listener=l;}
@@ -2146,6 +2158,7 @@ public class FireMainActivity extends Activity {
         void setOrientation(int degrees){orientation=((degrees%360)+360)%360;invalidate();}
         void setTrails(boolean value){showTrails=value;invalidate();}
         void setMiles(boolean value){miles=value;invalidate();}
+        void setDisplayRange(int km){range=Math.max(5,km);invalidate();}
         void setAlertRange(boolean enabled,int km){alertEnabled=enabled;alertRange=km;invalidate();}
         void setSelected(String hex){selected=hex;invalidate();}
 
@@ -2169,7 +2182,7 @@ public class FireMainActivity extends Activity {
             boolean square="tactical".equals(style)||"pulse".equals(style);
 
             p.setStyle(Paint.Style.FILL);
-            p.setColor(Color.rgb(3,15,11));
+            p.setColor(Color.argb(220,3,15,11));
             if(square)c.drawRect(cx-rad,cy-rad,cx+rad,cy+rad,p);
             else c.drawCircle(cx,cy,rad,p);
 
