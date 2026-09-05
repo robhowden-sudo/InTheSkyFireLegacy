@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.*;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
 import android.location.LocationManager;
 import android.view.*;
@@ -900,6 +901,137 @@ public class FireMainActivity extends Activity {
             this.windDirection=windDirection;this.windSpeed=windSpeed;this.humidity=humidity;this.cloud=cloud;
             this.localConditions=localConditions;this.icon=icon;this.tempUnit=tempUnit;this.pressureHistory=pressureHistory;this.days=days;
         }
+    }
+
+    static class ForecastDay {
+        final String day,condition,high,low,rain;
+        ForecastDay(String day,String condition,String high,String low,String rain){
+            this.day=day;this.condition=condition;this.high=high;this.low=low;this.rain=rain;
+        }
+    }
+
+    private void buildFiveDayHeader() {
+        if(fiveDayGrid==null)return;
+        fiveDayGrid.removeAllViews();
+        LinearLayout row=new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        String[] heads={"DAY","WX","HIGH","LOW","RAIN"};
+        float[] weights={1.0f,1.7f,1.0f,1.0f,1.0f};
+        for(int i=0;i<heads.length;i++){
+            TextView t=text(heads[i],12,CYAN);
+            t.setGravity(Gravity.CENTER);
+            t.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+            row.addView(t,new LinearLayout.LayoutParams(0,dp(32),weights[i]));
+        }
+        fiveDayGrid.addView(row);
+    }
+
+    private void renderFiveDay(List<ForecastDay> days) {
+        if(fiveDayGrid==null)return;
+        buildFiveDayHeader();
+        if(days==null||days.isEmpty()){
+            TextView none=text("FIVE-DAY FORECAST UNAVAILABLE",12,DIM);
+            none.setGravity(Gravity.CENTER);
+            fiveDayGrid.addView(none,new LinearLayout.LayoutParams(-1,dp(44)));
+            return;
+        }
+        float[] weights={1.0f,1.7f,1.0f,1.0f,1.0f};
+        for(int i=0;i<Math.min(5,days.size());i++){
+            ForecastDay d=days.get(i);
+            LinearLayout row=new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            String[] vals={d.day,d.condition,d.high,d.low,d.rain};
+            for(int k=0;k<vals.length;k++){
+                TextView t=text(vals[k],12,k==4?AMBER:(k==1?TEXT:CYAN));
+                t.setGravity(Gravity.CENTER);
+                row.addView(t,new LinearLayout.LayoutParams(0,dp(38),weights[k]));
+            }
+            fiveDayGrid.addView(row);
+        }
+    }
+
+    private ArrayList<ForecastDay> buildForecastDaysFromOpenMeteo(JSONObject root) {
+        ArrayList<ForecastDay> out=new ArrayList<ForecastDay>();
+        try{
+            JSONObject d=root.getJSONObject("daily");
+            JSONArray times=d.getJSONArray("time");
+            JSONArray codes=d.getJSONArray("weather_code");
+            JSONArray highs=d.getJSONArray("temperature_2m_max");
+            JSONArray lows=d.getJSONArray("temperature_2m_min");
+            JSONArray rain=d.getJSONArray("precipitation_sum");
+            SimpleDateFormat input=new SimpleDateFormat("yyyy-MM-dd",Locale.US);
+            SimpleDateFormat label=new SimpleDateFormat("EEE",Locale.UK);
+            for(int i=0;i<Math.min(5,times.length());i++){
+                Date dt=input.parse(times.optString(i));
+                out.add(new ForecastDay(
+                    dt==null?"---":label.format(dt).toUpperCase(Locale.UK),
+                    weatherCode(codes.optInt(i)).toUpperCase(Locale.US),
+                    temperatureLabel(highs.optDouble(i)),
+                    temperatureLabel(lows.optDouble(i)),
+                    String.format(Locale.US,"%.1f mm",rain.optDouble(i))
+                ));
+            }
+        }catch(Exception ignored){}
+        return out;
+    }
+
+    private ArrayList<ForecastDay> buildForecastDaysFromMet(JSONArray ts) {
+        ArrayList<ForecastDay> out=new ArrayList<ForecastDay>();
+        try{
+            LinkedHashMap<String,double[]> values=new LinkedHashMap<String,double[]>();
+            LinkedHashMap<String,String> labels=new LinkedHashMap<String,String>();
+            LinkedHashMap<String,String> conditions=new LinkedHashMap<String,String>();
+            LinkedHashMap<String,Double> rainTotals=new LinkedHashMap<String,Double>();
+            SimpleDateFormat in=new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'",Locale.US);
+            in.setTimeZone(TimeZone.getTimeZone("UTC"));
+            SimpleDateFormat keyFmt=new SimpleDateFormat("yyyy-MM-dd",Locale.US);
+            SimpleDateFormat dayFmt=new SimpleDateFormat("EEE",Locale.UK);
+
+            for(int i=0;i<ts.length()&&values.size()<6;i++){
+                JSONObject p=ts.getJSONObject(i);
+                Date dt;
+                try{dt=in.parse(p.optString("time"));}catch(Exception ex){continue;}
+                String key=keyFmt.format(dt);
+                JSONObject data=p.getJSONObject("data");
+                JSONObject details=data.getJSONObject("instant").getJSONObject("details");
+                double temp=details.optDouble("air_temperature");
+                double[] v=values.get(key);
+                if(v==null){
+                    v=new double[]{temp,temp};
+                    values.put(key,v);
+                    labels.put(key,dayFmt.format(dt).toUpperCase(Locale.UK));
+                }else{
+                    v[0]=Math.min(v[0],temp);
+                    v[1]=Math.max(v[1],temp);
+                }
+
+                JSONObject next=data.optJSONObject("next_1_hours");
+                if(next!=null){
+                    JSONObject summary=next.optJSONObject("summary");
+                    if(summary!=null && !conditions.containsKey(key)){
+                        conditions.put(key,summary.optString("symbol_code","").replace("_"," ").toUpperCase(Locale.US));
+                    }
+                    JSONObject det=next.optJSONObject("details");
+                    if(det!=null){
+                        double old=rainTotals.containsKey(key)?rainTotals.get(key):0.0;
+                        rainTotals.put(key,old+det.optDouble("precipitation_amount",0.0));
+                    }
+                }
+            }
+
+            for(String key:values.keySet()){
+                if(out.size()>=5)break;
+                double[] v=values.get(key);
+                out.add(new ForecastDay(
+                    labels.get(key),
+                    conditions.containsKey(key)?conditions.get(key):"FORECAST",
+                    temperatureLabel(v[1]),
+                    temperatureLabel(v[0]),
+                    String.format(Locale.US,"%.1f mm",rainTotals.containsKey(key)?rainTotals.get(key):0.0)
+                ));
+            }
+        }catch(Exception ignored){}
+        return out;
     }
 
     private String weatherCode(int code) {
