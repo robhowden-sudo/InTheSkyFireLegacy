@@ -445,30 +445,47 @@ public class FireMainActivity extends Activity {
 
             try {
                 String article = AircraftArticles.article(a.type);
-                if (article == null && a.description != null && a.description.length() > 3) article = a.description;
+                if (article == null && a.type != null && a.type.trim().length() > 0)
+                    article = a.type.trim() + " aircraft";
                 if (article != null) {
-                    String enc = URLEncoder.encode(article, "UTF-8").replace("+","%20");
+                    String enc = URLEncoder.encode(article.replace(" ","_"), "UTF-8").replace("+","%20");
                     JSONObject w = getJson("https://en.wikipedia.org/api/rest_v1/page/summary/"+enc);
-                    wikiText = w.optString("extract");
-                    JSONObject thumb = w.optJSONObject("thumbnail");
-                    if (thumb != null) bitmap = getBitmap(thumb.optString("source"));
+                    String returnedTitle=w.optString("title","");
+                    String extract=w.optString("extract","");
+                    if (!"disambiguation".equalsIgnoreCase(w.optString("type")) &&
+                        returnedTitle.length()>0 && extract.length()>0) {
+                        wikiText = extract;
+                        JSONObject thumb = w.optJSONObject("thumbnail");
+                        if (thumb != null) {
+                            String source=thumb.optString("source");
+                            if(source.startsWith("https://upload.wikimedia.org/"))
+                                bitmap = getBitmap(source);
+                        }
+                    }
                 }
             } catch (Exception ignored) {}
 
             if (bitmap == null) {
                 try {
                     String article = AircraftArticles.article(a.type);
-                    if (article == null && a.description != null && a.description.length() > 3) article = a.description;
                     if (article != null) {
-                        String enc = URLEncoder.encode(article, "UTF-8");
-                        JSONObject q = getJson("https://en.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&piprop=thumbnail&pithumbsize=700&titles="+enc);
-                        JSONObject pages = q.optJSONObject("query") == null ? null : q.optJSONObject("query").optJSONObject("pages");
-                        if (pages != null) {
-                            Iterator<String> keys = pages.keys();
-                            while(keys.hasNext() && bitmap==null) {
-                                JSONObject pg=pages.optJSONObject(keys.next());
-                                JSONObject thumb=pg==null?null:pg.optJSONObject("thumbnail");
-                                if(thumb!=null) bitmap=getBitmap(thumb.optString("source"));
+                        String enc=URLEncoder.encode(article,"UTF-8");
+                        String endpoint="https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2"+
+                            "&generator=images&titles="+enc+
+                            "&gimlimit=40&prop=imageinfo&iiprop=url&iiurlwidth=900&redirects=1&origin=*";
+                        JSONObject q=getJson(endpoint);
+                        JSONArray pages=q.optJSONObject("query")==null?null:q.optJSONObject("query").optJSONArray("pages");
+                        if(pages!=null){
+                            for(int i=0;i<pages.length() && bitmap==null;i++){
+                                JSONObject pg=pages.optJSONObject(i);
+                                String title=pg==null?"":pg.optString("title").toLowerCase(Locale.US);
+                                if(title.contains("logo")||title.contains("flag")||title.contains("badge")||
+                                   title.contains("diagram")||title.contains("cockpit")||title.contains("interior")||
+                                   title.contains("wingtip")) continue;
+                                JSONObject info=pg.optJSONArray("imageinfo")==null?null:pg.optJSONArray("imageinfo").optJSONObject(0);
+                                if(info==null)continue;
+                                String source=info.optString("thumburl",info.optString("url"));
+                                if(source.startsWith("https://upload.wikimedia.org/")) bitmap=getBitmap(source);
                             }
                         }
                     }
@@ -531,19 +548,19 @@ public class FireMainActivity extends Activity {
         hero.addView(heroIcon,new LinearLayout.LayoutParams(dp(125),dp(132)));
         left.addView(hero,new LinearLayout.LayoutParams(-1,dp(142)));
 
-        temperatureTrendView = new WeatherTrendView(this,"TEMPERATURE TREND // LAST 12 HOURS",GREEN);
+        temperatureTrendView = new WeatherTrendView(this,"TEMPERATURE // LAST 12 HOURS",GREEN);
         left.addView(temperatureTrendView,new LinearLayout.LayoutParams(-1,dp(108)));
 
-        humidityTrendView = new WeatherTrendView(this,"HUMIDITY",CYAN);
+        humidityTrendView = new WeatherTrendView(this,"HUMIDITY // LAST 24 HOURS",CYAN);
         left.addView(humidityTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
 
-        windTrendView = new WeatherTrendView(this,"WIND SPEED",GREEN);
+        windTrendView = new WeatherTrendView(this,"WIND SPEED // LAST 24 HOURS",GREEN);
         left.addView(windTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
 
-        pressureTrendView = new WeatherTrendView(this,"PRESSURE",CYAN);
+        pressureTrendView = new WeatherTrendView(this,"PRESSURE // LAST 12 HOURS",CYAN);
         left.addView(pressureTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
 
-        rainTrendView = new WeatherTrendView(this,"PRECIPITATION",AMBER);
+        rainTrendView = new WeatherTrendView(this,"RAINFALL // LAST 24 HOURS",AMBER);
         left.addView(rainTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
 
         LinearLayout.LayoutParams leftLp=new LinearLayout.LayoutParams(0,-1,6.6f);
@@ -607,7 +624,8 @@ public class FireMainActivity extends Activity {
         final String metUrl="https://api.met.no/weatherapi/locationforecast/2.0/compact?lat="+lat+"&lon="+lon;
         final String openUrl="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
             "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code"+
-            "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&forecast_days=2";
+            "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"+
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max&forecast_days=7&timezone=auto";
         io.execute(() -> {
             try {
                 WeatherDisplay wx;
@@ -779,7 +797,33 @@ public class FireMainActivity extends Activity {
     }
 
     private String buildFiveDayFromOpenMeteo(JSONObject root) {
-        return "Daily outlook supplied from hourly model data.\nUse MET Norway mode for full five-day summaries when available.";
+        try {
+            JSONObject d=root.getJSONObject("daily");
+            JSONArray times=d.getJSONArray("time");
+            JSONArray codes=d.getJSONArray("weather_code");
+            JSONArray highs=d.getJSONArray("temperature_2m_max");
+            JSONArray lows=d.getJSONArray("temperature_2m_min");
+            JSONArray rain=d.getJSONArray("precipitation_sum");
+            JSONArray winds=d.getJSONArray("wind_speed_10m_max");
+            SimpleDateFormat input=new SimpleDateFormat("yyyy-MM-dd",Locale.US);
+            SimpleDateFormat label=new SimpleDateFormat("EEE",Locale.UK);
+            StringBuilder out=new StringBuilder();
+            int count=Math.min(5,times.length());
+            for(int i=0;i<count;i++){
+                Date dt=input.parse(times.optString(i));
+                out.append(String.format(Locale.US,
+                    "%-4s  %-10s  HIGH %7s  LOW %7s  RAIN %4.1f mm  WIND %4.1f km/h\n",
+                    dt==null?"---":label.format(dt).toUpperCase(Locale.UK),
+                    weatherCode(codes.optInt(i)).toUpperCase(Locale.US),
+                    temperatureLabel(highs.optDouble(i)),
+                    temperatureLabel(lows.optDouble(i)),
+                    rain.optDouble(i),
+                    winds.optDouble(i)));
+            }
+            return out.toString();
+        } catch(Exception e) {
+            return "Five-day forecast unavailable.";
+        }
     }
 
     private String temperatureLabel(double celsius) {
@@ -1510,18 +1554,15 @@ public class FireMainActivity extends Activity {
                 canvas.drawLine(left,y,right,y,p);
             }
 
-            p.setColor(accent);p.setStrokeWidth(3f);
-            float px=0,py=0;boolean hasPrev=false;
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(accent);
+            float slot=(right-left)/Math.max(1,values.length);
+            float barWidth=Math.max(3f,slot*.58f);
             for(int i=0;i<values.length;i++){
                 double v=values[i];if(Double.isNaN(v))continue;
-                float x=left+(right-left)*i/Math.max(1,values.length-1);
+                float x=left+slot*i+slot*.5f;
                 float y=(float)(bottom-(v-min)/(max-min)*(bottom-top));
-                if(hasPrev)canvas.drawLine(px,py,x,y,p);
-                px=x;py=y;hasPrev=true;
-            }
-            if(hasPrev){
-                p.setStyle(Paint.Style.FILL);p.setColor(accent);
-                canvas.drawCircle(px,py,4.5f,p);
+                canvas.drawRect(x-barWidth/2f,y,x+barWidth/2f,bottom,p);
             }
         }
     }
