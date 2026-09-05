@@ -143,9 +143,15 @@ public class FireMainActivity extends Activity {
     }
 
     private void buildShell() {
+        FrameLayout stage = new FrameLayout(this);
+        stage.setBackgroundColor(BG);
+
+        NebulaBackgroundView backdrop = new NebulaBackgroundView(this);
+        stage.addView(backdrop, new FrameLayout.LayoutParams(-1,-1));
+
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
+        root.setBackgroundColor(Color.TRANSPARENT);
 
         TextView header = text("IN THE SKY  //  FIRE HD LEGACY", 18, GREEN);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -153,6 +159,7 @@ public class FireMainActivity extends Activity {
         root.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
 
         pageHost = new FrameLayout(this);
+        pageHost.setBackgroundColor(Color.TRANSPARENT);
         root.addView(pageHost, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         LinearLayout nav = new LinearLayout(this);
@@ -166,7 +173,8 @@ public class FireMainActivity extends Activity {
             nav.addView(b, new LinearLayout.LayoutParams(0, dp(56), 1f));
         }
         root.addView(nav);
-        setContentView(root);
+        stage.addView(root, new FrameLayout.LayoutParams(-1,-1));
+        setContentView(stage);
     }
 
     private void openPage(String page) {
@@ -203,7 +211,7 @@ public class FireMainActivity extends Activity {
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(BG);
+        page.setBackgroundColor(Color.TRANSPARENT);
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
@@ -532,7 +540,7 @@ public class FireMainActivity extends Activity {
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(8),dp(6),dp(8),dp(8));
-        page.setBackgroundColor(BG);
+        page.setBackgroundColor(Color.TRANSPARENT);
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
@@ -1047,7 +1055,7 @@ public class FireMainActivity extends Activity {
         page.setOrientation(LinearLayout.HORIZONTAL);
         page.setWeightSum(10f);
         page.setPadding(dp(10), dp(10), dp(10), dp(10));
-        page.setBackgroundColor(BG);
+        page.setBackgroundColor(Color.TRANSPARENT);
 
         AnalogClockView analog = new AnalogClockView(this);
         LinearLayout.LayoutParams analogLp = new LinearLayout.LayoutParams(0, -1, 5.5f);
@@ -1315,7 +1323,7 @@ public class FireMainActivity extends Activity {
         LinearLayout page=new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(12),dp(10),dp(12),dp(20));
-        page.setBackgroundColor(BG);
+        page.setBackgroundColor(Color.TRANSPARENT);
         page.addView(text("FIRE HD LEGACY SETTINGS",20,GREEN));
 
         EditText name=field(prefs.getString("place","Leeds"),"Location name");
@@ -1695,6 +1703,87 @@ public class FireMainActivity extends Activity {
     @Override protected void onDestroy(){
         if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);if(pageCycleTick!=null)ui.removeCallbacks(pageCycleTick);
         io.shutdownNow();super.onDestroy();
+    }
+
+    public static class NebulaBackgroundView extends View {
+        private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Random random=new Random(7319);
+        private float[] starsX,starsY,starsR;
+        private int[] starsA;
+
+        NebulaBackgroundView(Context context){
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE,null);
+        }
+
+        private void ensureStars(){
+            if(starsX!=null)return;
+            final int count=150;
+            starsX=new float[count];starsY=new float[count];starsR=new float[count];starsA=new int[count];
+            for(int i=0;i<count;i++){
+                starsX[i]=random.nextFloat();
+                starsY[i]=random.nextFloat();
+                starsR[i]=0.45f+random.nextFloat()*1.45f;
+                starsA[i]=26+random.nextInt(78);
+            }
+        }
+
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);
+            ensureStars();
+            int w=getWidth(),h=getHeight();
+            if(w<=0||h<=0)return;
+
+            canvas.drawColor(BG);
+
+            // Subtle nebula clouds. Static, low contrast, cheap to render.
+            RadialGradient g1=new RadialGradient(
+                w*.18f,h*.30f,Math.max(w,h)*.48f,
+                new int[]{
+                    Color.argb(30,14,75,58),
+                    Color.argb(14,8,43,34),
+                    Color.TRANSPARENT
+                },
+                new float[]{0f,.42f,1f},Shader.TileMode.CLAMP);
+            p.setShader(g1);canvas.drawRect(0,0,w,h,p);
+
+            RadialGradient g2=new RadialGradient(
+                w*.78f,h*.68f,Math.max(w,h)*.52f,
+                new int[]{
+                    Color.argb(24,21,67,82),
+                    Color.argb(10,10,38,46),
+                    Color.TRANSPARENT
+                },
+                new float[]{0f,.48f,1f},Shader.TileMode.CLAMP);
+            p.setShader(g2);canvas.drawRect(0,0,w,h,p);
+
+            RadialGradient g3=new RadialGradient(
+                w*.55f,h*.08f,Math.max(w,h)*.34f,
+                new int[]{
+                    Color.argb(15,79,255,159),
+                    Color.TRANSPARENT
+                },
+                new float[]{0f,1f},Shader.TileMode.CLAMP);
+            p.setShader(g3);canvas.drawRect(0,0,w,h,p);
+            p.setShader(null);
+
+            // Deterministic starfield, inspired by the Windows Store version.
+            for(int i=0;i<starsX.length;i++){
+                int alpha=starsA[i];
+                int tint=i%7==0?CYAN:TEXT;
+                p.setColor(Color.argb(alpha,Color.red(tint),Color.green(tint),Color.blue(tint)));
+                p.setStyle(Paint.Style.FILL);
+                canvas.drawCircle(starsX[i]*w,starsY[i]*h,starsR[i],p);
+            }
+
+            // A few restrained brighter anchors.
+            for(int i=0;i<14;i++){
+                float x=((i*97)%997)/997f*w;
+                float y=((i*193)%991)/991f*h;
+                p.setColor(Color.argb(105,Color.red(CYAN),Color.green(CYAN),Color.blue(CYAN)));
+                canvas.drawCircle(x,y,1.5f+(i%3)*.45f,p);
+            }
+        }
     }
 
     public static class WeatherTrendView extends View {
