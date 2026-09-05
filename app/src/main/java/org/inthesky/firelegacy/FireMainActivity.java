@@ -61,7 +61,9 @@ public class FireMainActivity extends Activity {
     private boolean launchesExpanded = false;
     private WeatherCompassView windViewRef;
     private WeatherHistoryView historyViewRef;
-    private Runnable radarTick, clockTick, pageCycleTick;
+    private Runnable radarTick, clockTick, pageCycleTick, headerTick;
+    private TextView headerClock;
+    private Set<String> previousAlertContacts = null;
     private String currentPage = "RADAR";
     private SSLSocketFactory weatherSslFactory;
     private List<Aircraft> aircraft = new ArrayList<Aircraft>();
@@ -155,10 +157,23 @@ public class FireMainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.TRANSPARENT);
 
-        TextView header = text("IN THE SKY  //  FIRE HD LEGACY", 18, GREEN);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8),0,dp(8),0);
         header.setBackground(panelBackground(true));
-        root.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
+
+        TextView title = text("IN THE SKY  //  FIRE HD LEGACY", 18, GREEN);
+        title.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+        header.addView(title,new LinearLayout.LayoutParams(0,dp(52),1f));
+
+        headerClock = text("",14,TEXT);
+        headerClock.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        headerClock.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+        header.addView(headerClock,new LinearLayout.LayoutParams(dp(285),dp(52)));
+
+        root.addView(header,new LinearLayout.LayoutParams(-1,dp(52)));
+        startHeaderClock();
 
         pageHost = new FrameLayout(this);
         pageHost.setBackgroundColor(Color.TRANSPARENT);
@@ -177,6 +192,22 @@ public class FireMainActivity extends Activity {
         root.addView(nav);
         stage.addView(root, new FrameLayout.LayoutParams(-1,-1));
         setContentView(stage);
+    }
+
+    private void startHeaderClock() {
+        if(headerTick!=null) ui.removeCallbacks(headerTick);
+        headerTick=new Runnable(){
+            public void run(){
+                if(headerClock!=null){
+                    Date now=new Date();
+                    SimpleDateFormat tf=new SimpleDateFormat(prefs.getBoolean("clock24",true)?"HH:mm:ss":"hh:mm:ss a",Locale.UK);
+                    SimpleDateFormat df=new SimpleDateFormat("EEE  d MMM yyyy",Locale.UK);
+                    headerClock.setText(tf.format(now)+"   //   "+df.format(now).toUpperCase(Locale.UK));
+                }
+                ui.postDelayed(this,1000);
+            }
+        };
+        headerTick.run();
     }
 
     private void openPage(String page) {
@@ -247,6 +278,7 @@ public class FireMainActivity extends Activity {
 
                 prefs.edit().putInt("range",km).apply();
                 previousContacts=null;
+                previousAlertContacts=null;
 
                 if(radarView!=null){
                     radarView.setMiles(miles);
@@ -361,19 +393,34 @@ public class FireMainActivity extends Activity {
                 Collections.sort(list, (a,b) -> Double.compare(a.distanceKm,b.distanceKm));
                 ui.post(() -> {
                     Set<String> now = new HashSet<String>();
+                    Set<String> alertNow = new HashSet<String>();
                     for (Aircraft a : list) now.add(a.hex);
+
                     Aircraft entered = null;
                     int alertKm=prefs.getInt("alertRange",10);
                     boolean alertOn=prefs.getBoolean("alertEnabled",true);
-                    if (previousContacts != null && !sourceLabel.contains("CACHE") && alertOn) {
-                        for (Aircraft a : list) {
-                            if (!previousContacts.contains(a.hex) && a.distanceKm <= alertKm) {
-                                entered = a;
-                                break;
+
+                    if(alertOn){
+                        for(Aircraft a:list){
+                            if(a.distanceKm<=alertKm) alertNow.add(a.hex);
+                        }
+
+                        // Auto-select a contact only when it crosses INTO the orange alert boundary.
+                        // Existing contacts outside the ring may therefore trigger later when they enter it.
+                        if(previousAlertContacts!=null && !sourceLabel.contains("CACHE")){
+                            for(Aircraft a:list){
+                                if(a.distanceKm<=alertKm && !previousAlertContacts.contains(a.hex)){
+                                    entered=a;
+                                    break;
+                                }
                             }
                         }
                     }
-                    if(!sourceLabel.contains("CACHE")) previousContacts = now;
+
+                    if(!sourceLabel.contains("CACHE")){
+                        previousContacts = now;
+                        previousAlertContacts = alertNow;
+                    }
                     aircraft = list;
                     if (radarView != null) radarView.setAircraft(list, rangeKm);
                     status.setText(list.size()+" CONTACTS  //  "+distanceLabel(rangeKm)+"  //  "+sourceLabel);
@@ -1491,6 +1538,8 @@ public class FireMainActivity extends Activity {
                     .putString("customAccent",customAccent.getText().toString().trim()).apply();
 
                 applyTheme(chosenTheme);
+                previousAlertContacts=null;
+                previousContacts=null;
                 Toast.makeText(this,"Settings saved",Toast.LENGTH_SHORT).show();
                 buildShell();
                 schedulePageCycle();
@@ -1709,7 +1758,7 @@ public class FireMainActivity extends Activity {
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
 
     @Override protected void onDestroy(){
-        if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);if(pageCycleTick!=null)ui.removeCallbacks(pageCycleTick);
+        if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);if(pageCycleTick!=null)ui.removeCallbacks(pageCycleTick);if(headerTick!=null)ui.removeCallbacks(headerTick);
         io.shutdownNow();super.onDestroy();
     }
 
