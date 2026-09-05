@@ -8,6 +8,7 @@
     <application
         android:allowBackup="true"
         android:label="In The Sky Fire"
+        android:icon="@drawable/in_the_sky_android_icon"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".FireMainActivity"
