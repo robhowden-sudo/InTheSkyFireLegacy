@@ -49,7 +49,8 @@ public class FireMainActivity extends Activity {
     private LinearLayout aircraftCard;
     private ImageView aircraftImage;
     private TextView aircraftTitle, aircraftDetails, aircraftReference;
-    private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay, weatherWarnings;
+    private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay, weatherWarnings, weatherLocalConditions, weatherCity;
+    private WeatherTrendView temperatureTrendView, humidityTrendView, windTrendView, pressureTrendView, rainTrendView;
     private TextView timeClock, timeDate, timeZones, launchSummary;
     private Button launchMoreButton;
     private final List<LegacyLaunch> launchList = new ArrayList<LegacyLaunch>();
@@ -490,70 +491,113 @@ public class FireMainActivity extends Activity {
     private void showWeather() {
         clearPage();
 
-        ScrollView outer = new ScrollView(this);
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(10),dp(8),dp(10),dp(16));
+        page.setPadding(dp(8),dp(6),dp(8),dp(8));
         page.setBackgroundColor(BG);
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
         weatherStatus = text("WEATHER // "+locationLabel(), 18, GREEN);
+        weatherStatus.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         Button refresh = button("REFRESH");
         refresh.setOnClickListener(v -> refreshWeather());
-        top.addView(weatherStatus,new LinearLayout.LayoutParams(0,dp(50),1f));
-        top.addView(refresh,new LinearLayout.LayoutParams(dp(110),dp(50)));
+        top.addView(weatherStatus,new LinearLayout.LayoutParams(0,dp(48),1f));
+        top.addView(refresh,new LinearLayout.LayoutParams(dp(112),dp(48)));
         page.addView(top);
 
-        TextView localTitle=text("LOCAL FORECAST",13,DIM);
-        page.addView(localTitle);
+        LinearLayout columns = new LinearLayout(this);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        columns.setWeightSum(10f);
 
-        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 28, GREEN);
+        // LEFT 6.6 / 10: hero + history instruments.
+        LinearLayout left = new LinearLayout(this);
+        left.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.HORIZONTAL);
+        hero.setGravity(Gravity.CENTER_VERTICAL);
+        hero.setPadding(dp(16),dp(10),dp(16),dp(10));
+        hero.setBackgroundColor(PANEL);
+
+        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 30, GREEN);
         weatherCurrent.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        weatherCurrent.setBackgroundColor(PANEL);
-        weatherCurrent.setPadding(dp(18),dp(16),dp(18),dp(16));
-        page.addView(weatherCurrent,new LinearLayout.LayoutParams(-1,dp(138)));
+        hero.addView(weatherCurrent,new LinearLayout.LayoutParams(0,dp(132),1f));
 
-        TextView windTitle=text("WIND / ATMOSPHERE",13,DIM);
-        page.addView(windTitle);
-        WeatherCompassView windView=new WeatherCompassView(this);
-        page.addView(windView,new LinearLayout.LayoutParams(-1,dp(210)));
-        windViewRef=windView;
+        TextView heroIcon = text("☁", 58, AMBER);
+        heroIcon.setGravity(Gravity.CENTER);
+        heroIcon.setTag("weatherHeroIcon");
+        hero.addView(heroIcon,new LinearLayout.LayoutParams(dp(125),dp(132)));
+        left.addView(hero,new LinearLayout.LayoutParams(-1,dp(142)));
 
-        TextView fiveTitle=text("FIVE DAY OUTLOOK",13,DIM);
-        page.addView(fiveTitle);
-        weatherFiveDay=text("Waiting for forecast data…",16,TEXT);
+        temperatureTrendView = new WeatherTrendView(this,"TEMPERATURE TREND // LAST 12 HOURS",GREEN);
+        left.addView(temperatureTrendView,new LinearLayout.LayoutParams(-1,dp(108)));
+
+        humidityTrendView = new WeatherTrendView(this,"HUMIDITY",CYAN);
+        left.addView(humidityTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
+
+        windTrendView = new WeatherTrendView(this,"WIND SPEED",GREEN);
+        left.addView(windTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
+
+        pressureTrendView = new WeatherTrendView(this,"PRESSURE",CYAN);
+        left.addView(pressureTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
+
+        rainTrendView = new WeatherTrendView(this,"PRECIPITATION",AMBER);
+        left.addView(rainTrendView,new LinearLayout.LayoutParams(-1,dp(76)));
+
+        LinearLayout.LayoutParams leftLp=new LinearLayout.LayoutParams(0,-1,6.6f);
+        leftLp.setMargins(0,0,dp(6),0);
+        columns.addView(left,leftLp);
+
+        // RIGHT 3.4 / 10: city, five-day forecast, local conditions + alerts.
+        LinearLayout right = new LinearLayout(this);
+        right.setOrientation(LinearLayout.VERTICAL);
+
+        weatherCity = text("NEAREST CITY / TOWN // "+locationLabel().toUpperCase(Locale.UK), 14, CYAN);
+        weatherCity.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+        weatherCity.setGravity(Gravity.CENTER);
+        weatherCity.setBackgroundColor(PANEL);
+        right.addView(weatherCity,new LinearLayout.LayoutParams(-1,dp(48)));
+
+        TextView fiveTitle=text("FIVE DAY FORECAST",12,DIM);
+        fiveTitle.setBackgroundColor(PANEL);
+        right.addView(fiveTitle,new LinearLayout.LayoutParams(-1,dp(34)));
+
+        weatherFiveDay=text("Waiting for forecast data…",14,TEXT);
         weatherFiveDay.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        weatherFiveDay.setBackgroundColor(PANEL);
-        weatherFiveDay.setPadding(dp(14),dp(12),dp(14),dp(12));
-        page.addView(weatherFiveDay);
+        weatherFiveDay.setBackgroundColor(Color.rgb(3,15,11));
+        weatherFiveDay.setPadding(dp(10),dp(8),dp(10),dp(8));
+        right.addView(weatherFiveDay,new LinearLayout.LayoutParams(-1,0,1.2f));
 
-        TextView historyTitle=text("WEATHER HISTORY // LAST 24 HOURS",13,DIM);
-        page.addView(historyTitle);
-        WeatherHistoryView history=new WeatherHistoryView(this);
-        historyViewRef=history;
-        page.addView(history,new LinearLayout.LayoutParams(-1,dp(330)));
+        TextView localTitle=text("LOCAL CONDITIONS",12,DIM);
+        localTitle.setBackgroundColor(PANEL);
+        right.addView(localTitle,new LinearLayout.LayoutParams(-1,dp(34)));
 
-        TextView warningTitle=text("WEATHER ALERTS",13,DIM);
-        page.addView(warningTitle);
-        weatherWarnings=text("Checking official warning feeds…",13,TEXT);
-        weatherWarnings.setBackgroundColor(PANEL);
-        weatherWarnings.setPadding(dp(14),dp(10),dp(14),dp(10));
-        page.addView(weatherWarnings);
+        weatherLocalConditions=text("Loading local conditions…",15,TEXT);
+        weatherLocalConditions.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+        weatherLocalConditions.setBackgroundColor(Color.rgb(3,15,11));
+        weatherLocalConditions.setPadding(dp(12),dp(10),dp(12),dp(10));
+        right.addView(weatherLocalConditions,new LinearLayout.LayoutParams(-1,0,1f));
 
-        TextView outlookTitle=text("NEXT 24 HOURS",13,DIM);
-        page.addView(outlookTitle);
-        weatherBody=text("Loading forecast…",14,TEXT);
-        weatherBody.setBackgroundColor(Color.rgb(3,15,11));
-        weatherBody.setPadding(dp(14),dp(12),dp(14),dp(12));
-        page.addView(weatherBody);
+        TextView warningTitle=text("WEATHER ALERTS",12,DIM);
+        warningTitle.setBackgroundColor(PANEL);
+        right.addView(warningTitle,new LinearLayout.LayoutParams(-1,dp(34)));
 
-        TextView source=text("Primary: MET Norway  •  automatic Open-Meteo fallback on Fire OS 5",10,DIM);
-        page.addView(source);
+        weatherWarnings=text("Checking official warning feeds…",12,TEXT);
+        weatherWarnings.setBackgroundColor(Color.rgb(3,15,11));
+        weatherWarnings.setPadding(dp(10),dp(8),dp(10),dp(8));
+        right.addView(weatherWarnings,new LinearLayout.LayoutParams(-1,0,.65f));
 
-        outer.addView(page);
-        pageHost.addView(outer);
+        columns.addView(right,new LinearLayout.LayoutParams(0,-1,3.4f));
+
+        page.addView(columns,new LinearLayout.LayoutParams(-1,0,1f));
+
+        weatherBody=text("",10,DIM);
+        weatherBody.setVisibility(View.GONE);
+        page.addView(weatherBody,new LinearLayout.LayoutParams(1,1));
+
+        pageHost.addView(page);
         refreshWeather();
     }
 
@@ -599,11 +643,26 @@ public class FireMainActivity extends Activity {
                 final String warningsFinal=warnings;
                 ui.post(() -> {
                     weatherStatus.setText("WEATHER // "+locationLabel()+" // "+source);
+                    weatherCity.setText("NEAREST CITY / TOWN // "+locationLabel().toUpperCase(Locale.UK));
                     weatherCurrent.setText(display.current);
-                    weatherBody.setText(display.forecast);
                     weatherFiveDay.setText(display.fiveDay);
-                    if(windViewRef!=null) windViewRef.setWind(display.windDirection, display.windSpeed, display.humidity, display.cloud);
-                    if(historyViewRef!=null) historyViewRef.setData(historyFinal);
+                    weatherLocalConditions.setText(display.localConditions);
+                    View heroIconView=pageHost.findViewWithTag("weatherHeroIcon");
+                    if(heroIconView instanceof TextView)((TextView)heroIconView).setText(display.icon);
+
+                    if(historyFinal!=null){
+                        temperatureTrendView.setSeries(historyFinal.temperature,display.tempUnit);
+                        humidityTrendView.setSeries(historyFinal.humidity,"%");
+                        windTrendView.setSeries(historyFinal.wind,prefs.getBoolean("miles",false)?"mph":"km/h");
+                        pressureTrendView.setSeries(display.pressureHistory,"hPa");
+                        rainTrendView.setSeries(historyFinal.rain,"mm");
+                    } else {
+                        temperatureTrendView.setUnavailable();
+                        humidityTrendView.setUnavailable();
+                        windTrendView.setUnavailable();
+                        pressureTrendView.setUnavailable();
+                        rainTrendView.setUnavailable();
+                    }
                     if(weatherWarnings!=null) weatherWarnings.setText(warningsFinal);
                 });
             } catch(final Exception e) {
@@ -646,7 +705,14 @@ public class FireMainActivity extends Activity {
                 details.optDouble("relative_humidity"),details.optDouble("wind_speed")));
         }
         String fiveDay=buildFiveDayFromMet(ts);
-        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,cloud);
+        String icon=weatherGlyph(symbol);
+        String local=
+            icon+"  "+symbol.replace("_"," ").toUpperCase(Locale.US)+"     "+temperatureLabel(temp)+"\n"+
+            "HUMIDITY   "+String.format(Locale.US,"%.1f%%",hum)+"     CLOUD   "+(Double.isNaN(cloud)?"--":String.format(Locale.US,"%.1f%%",cloud))+"\n"+
+            "WIND       "+String.format(Locale.US,"%.1f m/s",wind)+"     PRESSURE "+(Double.isNaN(pressure)?"--":String.format(Locale.US,"%.1f hPa",pressure));
+        double[] pHist=new double[Math.min(12,ts.length())];
+        for(int i=0;i<pHist.length;i++) pHist[i]=ts.getJSONObject(i).getJSONObject("data").getJSONObject("instant").getJSONObject("details").optDouble("air_pressure_at_sea_level",Double.NaN);
+        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,cloud,local,icon,prefs.getBoolean("fahrenheit",false)?"°F":"°C",pHist);
     }
 
     private WeatherDisplay parseOpenMeteo(JSONObject root) throws Exception {
@@ -673,7 +739,13 @@ public class FireMainActivity extends Activity {
                 hums.optDouble(i),winds.optDouble(i)));
         }
         String fiveDay=buildFiveDayFromOpenMeteo(root);
-        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,Double.NaN);
+        String icon=weatherGlyph(code);
+        String local=
+            icon+"  "+weatherCode(code).toUpperCase(Locale.US)+"     "+temperatureLabel(temp)+"\n"+
+            "HUMIDITY   "+String.format(Locale.US,"%.1f%%",hum)+"     CLOUD   --\n"+
+            "WIND       "+String.format(Locale.US,"%.1f km/h",wind)+"     PRESSURE --";
+        double[] pHist=new double[12];Arrays.fill(pHist,Double.NaN);
+        return new WeatherDisplay(current,sb.toString(),fiveDay,direction,wind,hum,Double.NaN,local,icon,prefs.getBoolean("fahrenheit",false)?"°F":"°C",pHist);
     }
 
     private String buildFiveDayFromMet(JSONArray ts) throws Exception {
@@ -746,11 +818,14 @@ public class FireMainActivity extends Activity {
     }
 
     static class WeatherDisplay {
-        final String current,forecast,fiveDay;
+        final String current,forecast,fiveDay,localConditions,icon,tempUnit;
         final double windDirection,windSpeed,humidity,cloud;
-        WeatherDisplay(String current,String forecast,String fiveDay,double windDirection,double windSpeed,double humidity,double cloud){
+        final double[] pressureHistory;
+        WeatherDisplay(String current,String forecast,String fiveDay,double windDirection,double windSpeed,double humidity,double cloud,
+                       String localConditions,String icon,String tempUnit,double[] pressureHistory){
             this.current=current;this.forecast=forecast;this.fiveDay=fiveDay;
             this.windDirection=windDirection;this.windSpeed=windSpeed;this.humidity=humidity;this.cloud=cloud;
+            this.localConditions=localConditions;this.icon=icon;this.tempUnit=tempUnit;this.pressureHistory=pressureHistory;
         }
     }
 
@@ -1364,6 +1439,91 @@ public class FireMainActivity extends Activity {
     @Override protected void onDestroy(){
         if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);if(pageCycleTick!=null)ui.removeCallbacks(pageCycleTick);
         io.shutdownNow();super.onDestroy();
+    }
+
+    public static class WeatherTrendView extends View {
+        private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final String title;
+        private final int accent;
+        private double[] values;
+        private String unit="";
+        private boolean unavailable=false;
+
+        WeatherTrendView(Context context,String title,int accent){
+            super(context);
+            this.title=title;this.accent=accent;
+            p.setTypeface(Typeface.MONOSPACE);
+            setBackgroundColor(PANEL);
+        }
+
+        void setSeries(double[] series,String unit){
+            this.values=series==null?null:series.clone();
+            this.unit=unit==null?"":unit;
+            unavailable=false;
+            invalidate();
+        }
+
+        void setUnavailable(){unavailable=true;values=null;invalidate();}
+
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);
+            float w=getWidth(),h=getHeight();
+            float left=Math.min(155f,w*.22f);
+            float right=w-16f;
+            float top=24f,bottom=h-14f;
+
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(1f);
+            p.setColor(Color.rgb(22,72,51));
+            canvas.drawRect(1,1,w-2,h-2,p);
+
+            p.setStyle(Paint.Style.FILL);
+            p.setTextAlign(Paint.Align.LEFT);
+            p.setTextSize(15f);
+            p.setColor(CYAN);
+            canvas.drawText(title,12,19,p);
+
+            if(unavailable||values==null||values.length==0){
+                p.setTextSize(13f);p.setColor(DIM);
+                canvas.drawText("DATA UNAVAILABLE",left,Math.max(38,h/2f),p);
+                return;
+            }
+
+            double min=Double.POSITIVE_INFINITY,max=Double.NEGATIVE_INFINITY;
+            double latest=Double.NaN;
+            int count=0;
+            for(double v:values){
+                if(Double.isNaN(v))continue;
+                min=Math.min(min,v);max=Math.max(max,v);latest=v;count++;
+            }
+            if(count==0){setUnavailable();return;}
+            if(Math.abs(max-min)<.001){max=min+1;}
+
+            p.setTextSize(21f);p.setColor(TEXT);p.setTypeface(Typeface.create(Typeface.MONOSPACE,Typeface.BOLD));
+            canvas.drawText(String.format(Locale.US,"%.1f%s",latest,unit),12,Math.min(h-18,50),p);
+            p.setTypeface(Typeface.MONOSPACE);
+
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1f);
+            p.setColor(Color.argb(80,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+            for(int g=0;g<=3;g++){
+                float y=top+(bottom-top)*g/3f;
+                canvas.drawLine(left,y,right,y,p);
+            }
+
+            p.setColor(accent);p.setStrokeWidth(3f);
+            float px=0,py=0;boolean hasPrev=false;
+            for(int i=0;i<values.length;i++){
+                double v=values[i];if(Double.isNaN(v))continue;
+                float x=left+(right-left)*i/Math.max(1,values.length-1);
+                float y=(float)(bottom-(v-min)/(max-min)*(bottom-top));
+                if(hasPrev)canvas.drawLine(px,py,x,y,p);
+                px=x;py=y;hasPrev=true;
+            }
+            if(hasPrev){
+                p.setStyle(Paint.Style.FILL);p.setColor(accent);
+                canvas.drawCircle(px,py,4.5f,p);
+            }
+        }
     }
 
     static class WeatherHistoryData {
