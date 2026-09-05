@@ -49,10 +49,12 @@ public class FireMainActivity extends Activity {
     private LinearLayout aircraftCard;
     private ImageView aircraftImage;
     private TextView aircraftTitle, aircraftDetails, aircraftReference;
-    private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay;
+    private TextView weatherBody, weatherStatus, weatherCurrent, weatherFiveDay, weatherWarnings;
     private TextView timeClock, timeDate, timeZones;
     private WeatherCompassView windViewRef;
-    private Runnable radarTick, clockTick;
+    private WeatherHistoryView historyViewRef;
+    private Runnable radarTick, clockTick, pageCycleTick;
+    private String currentPage = "RADAR";
     private SSLSocketFactory weatherSslFactory;
     private List<Aircraft> aircraft = new ArrayList<Aircraft>();
     private Set<String> previousContacts = null;
@@ -65,7 +67,8 @@ public class FireMainActivity extends Activity {
         applyTheme(prefs.getString("theme", "PHOSPHOR"));
         getWindow().setStatusBarColor(BG);
         buildShell();
-        showRadar();
+        openPage("RADAR");
+        schedulePageCycle();
     }
 
     private void enableTls12() {
@@ -139,16 +142,35 @@ public class FireMainActivity extends Activity {
         for (String label : labels) {
             Button b = button(label);
             final String page = label;
-            b.setOnClickListener(v -> {
-                if ("RADAR".equals(page)) showRadar();
-                else if ("WEATHER".equals(page)) showWeather();
-                else if ("TIME".equals(page)) showTime();
-                else showSettings();
-            });
+            b.setOnClickListener(v -> openPage(page));
             nav.addView(b, new LinearLayout.LayoutParams(0, dp(56), 1f));
         }
         root.addView(nav);
         setContentView(root);
+    }
+
+    private void openPage(String page) {
+        currentPage = page;
+        if ("RADAR".equals(page)) showRadar();
+        else if ("WEATHER".equals(page)) showWeather();
+        else if ("TIME".equals(page)) showTime();
+        else showSettings();
+    }
+
+    private void schedulePageCycle() {
+        if (pageCycleTick != null) ui.removeCallbacks(pageCycleTick);
+        pageCycleTick = new Runnable() {
+            public void run() {
+                int seconds = Math.max(8, Math.min(120, prefs.getInt("cycleSeconds", 20)));
+                if (prefs.getBoolean("autoCycle", false) && !"SETTINGS".equals(currentPage)) {
+                    if ("RADAR".equals(currentPage)) openPage("WEATHER");
+                    else if ("WEATHER".equals(currentPage)) openPage("TIME");
+                    else openPage("RADAR");
+                }
+                ui.postDelayed(this, seconds * 1000L);
+            }
+        };
+        ui.postDelayed(pageCycleTick, Math.max(8, Math.min(120, prefs.getInt("cycleSeconds",20))) * 1000L);
     }
 
     private void clearPage() {
@@ -274,15 +296,22 @@ public class FireMainActivity extends Activity {
         final int radiusNm = Math.max(1, (int)Math.ceil(rangeKm / 1.852));
         io.execute(() -> {
             try {
-                JSONObject root = getJson("https://api.adsb.lol/v2/point/"+lat+"/"+lon+"/"+radiusNm);
-                JSONArray arr = root.optJSONArray("ac");
                 final ArrayList<Aircraft> list = new ArrayList<Aircraft>();
-                if (arr != null) for (int i=0;i<arr.length();i++) {
-                    JSONObject o = arr.optJSONObject(i); if (o == null) continue;
-                    if (!o.has("lat") || !o.has("lon")) continue;
-                    Aircraft a = Aircraft.from(o, lat, lon);
-                    if (a.distanceKm <= rangeKm) list.add(a);
+                String radarSource = "ADSB.LOL";
+                try {
+                    JSONObject root = getJson("https://api.adsb.lol/v2/point/"+lat+"/"+lon+"/"+radiusNm);
+                    JSONArray arr = root.optJSONArray("ac");
+                    if (arr != null) for (int i=0;i<arr.length();i++) {
+                        JSONObject o = arr.optJSONObject(i); if (o == null) continue;
+                        if (!o.has("lat") || !o.has("lon")) continue;
+                        Aircraft a = Aircraft.from(o, lat, lon);
+                        if (a.distanceKm <= rangeKm) list.add(a);
+                    }
+                } catch (Exception primaryRadarError) {
+                    radarSource = "OPENSKY FALLBACK";
+                    list.addAll(loadOpenSkyFallback(lat, lon, rangeKm));
                 }
+                final String sourceLabel = radarSource;
                 Collections.sort(list, (a,b) -> Double.compare(a.distanceKm,b.distanceKm));
                 ui.post(() -> {
                     Set<String> now = new HashSet<String>();
@@ -296,13 +325,32 @@ public class FireMainActivity extends Activity {
                     previousContacts = now;
                     aircraft = list;
                     if (radarView != null) radarView.setAircraft(list, rangeKm);
-                    status.setText(list.size()+" CONTACTS  //  "+distanceLabel(rangeKm));
+                    status.setText(list.size()+" CONTACTS  //  "+distanceLabel(rangeKm)+"  //  "+sourceLabel);
                     if (entered != null) selectAircraft(entered);
                 });
             } catch (final Exception e) {
                 ui.post(() -> status.setText("RADAR ERROR: "+shortError(e)));
             }
         });
+    }
+
+    private ArrayList<Aircraft> loadOpenSkyFallback(double lat,double lon,int rangeKm) throws Exception {
+        double latSpan=rangeKm/111.0;
+        double cos=Math.max(0.2,Math.cos(Math.toRadians(lat)));
+        double lonSpan=rangeKm/(111.0*cos);
+        String url=String.format(Locale.US,
+            "https://opensky-network.org/api/states/all?lamin=%.5f&lomin=%.5f&lamax=%.5f&lomax=%.5f",
+            lat-latSpan,lon-lonSpan,lat+latSpan,lon+lonSpan);
+        JSONObject root=getJson(url);
+        JSONArray states=root.optJSONArray("states");
+        ArrayList<Aircraft> out=new ArrayList<Aircraft>();
+        if(states!=null) for(int i=0;i<states.length();i++){
+            JSONArray s=states.optJSONArray(i);
+            if(s==null || s.length()<11 || s.isNull(5) || s.isNull(6)) continue;
+            Aircraft a=Aircraft.fromOpenSky(s,lat,lon);
+            if(a.distanceKm<=rangeKm) out.add(a);
+        }
+        return out;
     }
 
     private void selectAircraft(final Aircraft a) {
@@ -365,6 +413,26 @@ public class FireMainActivity extends Activity {
                 }
             } catch (Exception ignored) {}
 
+            if (bitmap == null) {
+                try {
+                    String article = AircraftArticles.article(a.type);
+                    if (article == null && a.description != null && a.description.length() > 3) article = a.description;
+                    if (article != null) {
+                        String enc = URLEncoder.encode(article, "UTF-8");
+                        JSONObject q = getJson("https://en.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&piprop=thumbnail&pithumbsize=700&titles="+enc);
+                        JSONObject pages = q.optJSONObject("query") == null ? null : q.optJSONObject("query").optJSONObject("pages");
+                        if (pages != null) {
+                            Iterator<String> keys = pages.keys();
+                            while(keys.hasNext() && bitmap==null) {
+                                JSONObject pg=pages.optJSONObject(keys.next());
+                                JSONObject thumb=pg==null?null:pg.optJSONObject("thumbnail");
+                                if(thumb!=null) bitmap=getBitmap(thumb.optString("source"));
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
             final String reference = (meta.trim()+"\n\n"+routeText.trim()+"\n\n"+wikiText.trim()).trim();
             final Bitmap finalBitmap = bitmap;
             ui.post(() -> {
@@ -399,7 +467,8 @@ public class FireMainActivity extends Activity {
         TextView localTitle=text("LOCAL FORECAST",13,DIM);
         page.addView(localTitle);
 
-        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 22, TEXT);
+        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 28, GREEN);
+        weatherCurrent.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         weatherCurrent.setBackgroundColor(PANEL);
         weatherCurrent.setPadding(dp(18),dp(16),dp(18),dp(16));
         page.addView(weatherCurrent,new LinearLayout.LayoutParams(-1,dp(138)));
@@ -412,10 +481,24 @@ public class FireMainActivity extends Activity {
 
         TextView fiveTitle=text("FIVE DAY OUTLOOK",13,DIM);
         page.addView(fiveTitle);
-        weatherFiveDay=text("Waiting for forecast data…",14,TEXT);
+        weatherFiveDay=text("Waiting for forecast data…",16,TEXT);
+        weatherFiveDay.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         weatherFiveDay.setBackgroundColor(PANEL);
         weatherFiveDay.setPadding(dp(14),dp(12),dp(14),dp(12));
         page.addView(weatherFiveDay);
+
+        TextView historyTitle=text("WEATHER HISTORY // LAST 24 HOURS",13,DIM);
+        page.addView(historyTitle);
+        WeatherHistoryView history=new WeatherHistoryView(this);
+        historyViewRef=history;
+        page.addView(history,new LinearLayout.LayoutParams(-1,dp(330)));
+
+        TextView warningTitle=text("WEATHER ALERTS",13,DIM);
+        page.addView(warningTitle);
+        weatherWarnings=text("Checking official warning feeds…",13,TEXT);
+        weatherWarnings.setBackgroundColor(PANEL);
+        weatherWarnings.setPadding(dp(14),dp(10),dp(14),dp(10));
+        page.addView(weatherWarnings);
 
         TextView outlookTitle=text("NEXT 24 HOURS",13,DIM);
         page.addView(outlookTitle);
@@ -452,12 +535,20 @@ public class FireMainActivity extends Activity {
                 }
                 final WeatherDisplay display=wx;
                 final String source=provider;
+                WeatherHistoryData historyData = null;
+                String warnings = "Official warning feed unavailable.";
+                try { historyData = loadWeatherHistory(lat,lon); } catch(Exception ignored) {}
+                try { warnings = loadWeatherWarnings(lat,lon); } catch(Exception ignored) {}
+                final WeatherHistoryData historyFinal=historyData;
+                final String warningsFinal=warnings;
                 ui.post(() -> {
                     weatherStatus.setText("WEATHER // "+locationLabel()+" // "+source);
                     weatherCurrent.setText(display.current);
                     weatherBody.setText(display.forecast);
                     weatherFiveDay.setText(display.fiveDay);
                     if(windViewRef!=null) windViewRef.setWind(display.windDirection, display.windSpeed, display.humidity, display.cloud);
+                    if(historyViewRef!=null) historyViewRef.setData(historyFinal);
+                    if(weatherWarnings!=null) weatherWarnings.setText(warningsFinal);
                 });
             } catch(final Exception e) {
                 ui.post(() -> {
@@ -805,6 +896,24 @@ public class FireMainActivity extends Activity {
         });
         page.addView(refreshLabel);page.addView(refresh);
 
+        page.addView(text("AUTO PAGE CYCLING",13,DIM));
+        CheckBox autoCycle=new CheckBox(this);
+        autoCycle.setText("Automatically cycle Radar → Weather → Time");
+        autoCycle.setTextColor(TEXT);
+        autoCycle.setChecked(prefs.getBoolean("autoCycle",false));
+        page.addView(autoCycle);
+
+        SeekBar cycleSeconds=new SeekBar(this);
+        cycleSeconds.setMax(112);
+        cycleSeconds.setProgress(Math.max(0,prefs.getInt("cycleSeconds",20)-8));
+        TextView cycleLabel=text("Page duration: "+prefs.getInt("cycleSeconds",20)+" seconds",13,CYAN);
+        cycleSeconds.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar s,int p,boolean user){cycleLabel.setText("Page duration: "+(p+8)+" seconds");}
+            public void onStartTrackingTouch(SeekBar s){} public void onStopTrackingTouch(SeekBar s){}
+        });
+        page.addView(cycleLabel);page.addView(cycleSeconds);
+        page.addView(text("Cycling pauses while Settings is open.",11,DIM));
+
         CheckBox clock24=new CheckBox(this);
         clock24.setText("24-hour clock");
         clock24.setTextColor(TEXT);
@@ -825,6 +934,8 @@ public class FireMainActivity extends Activity {
                     .putBoolean("fahrenheit",temperatureUnit.getSelectedItemPosition()==1)
                     .putBoolean("alertEnabled",alertEnabled.isChecked())
                     .putInt("alertRange",alertRange.getProgress()+5)
+                    .putBoolean("autoCycle",autoCycle.isChecked())
+                    .putInt("cycleSeconds",cycleSeconds.getProgress()+8)
                     .putBoolean("trails",trails.isChecked())
                     .putString("radarStyle",styleIds[style.getSelectedItemPosition()])
                     .putInt("orientation",orientation.getSelectedItemPosition()*90)
@@ -833,7 +944,8 @@ public class FireMainActivity extends Activity {
                 applyTheme(chosenTheme);
                 Toast.makeText(this,"Settings saved",Toast.LENGTH_SHORT).show();
                 buildShell();
-                showSettings();
+                schedulePageCycle();
+                openPage("SETTINGS");
             }catch(Exception e){Toast.makeText(this,"Check latitude/longitude",Toast.LENGTH_SHORT).show();}
         });
         page.addView(save);
@@ -844,6 +956,76 @@ public class FireMainActivity extends Activity {
 
     private EditText field(String value,String hint){
         EditText e=new EditText(this);e.setText(value);e.setHint(hint);e.setTextColor(TEXT);e.setHintTextColor(DIM);e.setSingleLine(true);e.setBackgroundColor(PANEL);e.setPadding(dp(8),dp(8),dp(8),dp(8));return e;
+    }
+
+    private WeatherHistoryData loadWeatherHistory(double lat,double lon) throws Exception {
+        String url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
+            "&past_hours=24&forecast_hours=1&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,rain&timezone=auto";
+        JSONObject root=getJson(url);
+        JSONObject h=root.getJSONObject("hourly");
+        JSONArray temp=h.getJSONArray("temperature_2m");
+        JSONArray hum=h.getJSONArray("relative_humidity_2m");
+        JSONArray wind=h.getJSONArray("wind_speed_10m");
+        JSONArray rain=h.getJSONArray("rain");
+        int n=Math.min(24,Math.min(Math.min(temp.length(),hum.length()),Math.min(wind.length(),rain.length())));
+        double[] t=new double[n],hu=new double[n],w=new double[n],ra=new double[n];
+        int start=Math.max(0,temp.length()-n-1);
+        for(int i=0;i<n;i++){
+            int k=start+i;
+            t[i]=temp.optDouble(k,Double.NaN);
+            hu[i]=hum.optDouble(k,Double.NaN);
+            w[i]=wind.optDouble(k,Double.NaN);
+            ra[i]=rain.optDouble(k,0);
+            if(prefs.getBoolean("fahrenheit",false) && !Double.isNaN(t[i])) t[i]=t[i]*9/5+32;
+        }
+        return new WeatherHistoryData(t,hu,w,ra,prefs.getBoolean("fahrenheit",false));
+    }
+
+    private String loadWeatherWarnings(double lat,double lon) throws Exception {
+        // Fire target is UK-first; use the official Met Office national warning RSS.
+        try {
+            String xml=getText("https://weather.metoffice.gov.uk/public/data/PWSCache/WarningsRSS/Region/UK");
+            ArrayList<String> titles=new ArrayList<String>();
+            int pos=0;
+            while(titles.size()<4){
+                int a=xml.indexOf("<title>",pos); if(a<0)break;
+                int b=xml.indexOf("</title>",a); if(b<0)break;
+                String title=xml.substring(a+7,b).replace("<![CDATA[","").replace("]]>","").trim();
+                pos=b+8;
+                if(title.length()>0 && !title.toLowerCase(Locale.US).contains("weather warnings")) titles.add(title);
+            }
+            if(titles.isEmpty()) return "MET OFFICE // No warning entries returned. This does not guarantee no local hazard.";
+            StringBuilder out=new StringBuilder("MET OFFICE // ACTIVE / RECENT\n");
+            for(String t:titles)out.append("⚠  ").append(t).append("\n");
+            return out.toString().trim();
+        } catch(Exception primary) {
+            // US official fallback is useful if the saved location is in the USA.
+            if(lat>=24 && lat<=50 && lon>=-126 && lon<=-66){
+                JSONObject nws=getJson("https://api.weather.gov/alerts/active?point="+lat+","+lon);
+                JSONArray features=nws.optJSONArray("features");
+                if(features==null||features.length()==0)return "NWS // No active alerts returned.";
+                StringBuilder out=new StringBuilder("NWS FALLBACK\n");
+                for(int i=0;i<Math.min(4,features.length());i++){
+                    JSONObject p=features.optJSONObject(i).optJSONObject("properties");
+                    if(p!=null)out.append("⚠  ").append(p.optString("headline",p.optString("event"))).append("\n");
+                }
+                return out.toString().trim();
+            }
+            throw primary;
+        }
+    }
+
+    private String getText(String url) throws Exception {
+        HttpsURLConnection con=(HttpsURLConnection)new URL(url).openConnection();
+        con.setConnectTimeout(12000);con.setReadTimeout(18000);
+        con.setRequestProperty("User-Agent","InTheSky-FireHD-Legacy/1.0");
+        try{
+            int code=con.getResponseCode();
+            if(code<200||code>299)throw new IOException("HTTP "+code);
+            BufferedReader br=new BufferedReader(new InputStreamReader(con.getInputStream(),"UTF-8"));
+            StringBuilder sb=new StringBuilder();String line;while((line=br.readLine())!=null)sb.append(line).append('\n');
+            return sb.toString();
+        } finally {con.disconnect();}
     }
 
     private String distanceLabel(double km) {
@@ -914,8 +1096,59 @@ public class FireMainActivity extends Activity {
     private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
 
     @Override protected void onDestroy(){
-        if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);
+        if(radarTick!=null)ui.removeCallbacks(radarTick);if(clockTick!=null)ui.removeCallbacks(clockTick);if(pageCycleTick!=null)ui.removeCallbacks(pageCycleTick);
         io.shutdownNow();super.onDestroy();
+    }
+
+    static class WeatherHistoryData {
+        final double[] temperature,humidity,wind,rain;
+        final boolean fahrenheit;
+        WeatherHistoryData(double[] t,double[] h,double[] w,double[] r,boolean f){temperature=t;humidity=h;wind=w;rain=r;fahrenheit=f;}
+    }
+
+    public static class WeatherHistoryView extends View {
+        private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private WeatherHistoryData data;
+        WeatherHistoryView(Context c){super(c);p.setTypeface(Typeface.MONOSPACE);setBackgroundColor(PANEL);}
+        void setData(WeatherHistoryData d){data=d;invalidate();}
+        @Override protected void onDraw(Canvas c){
+            super.onDraw(c);
+            if(data==null||data.temperature.length==0){
+                p.setColor(DIM);p.setTextSize(18);c.drawText("HISTORY DATA UNAVAILABLE",20,35,p);return;
+            }
+            float left=112,right=getWidth()-18,top=18,rowH=(getHeight()-32)/4f;
+            drawSeries(c,"TEMP",data.temperature,left,right,top,rowH,data.fahrenheit?"°F":"°C",false);
+            drawSeries(c,"HUMID",data.humidity,left,right,top+rowH,rowH,"%",false);
+            drawSeries(c,"WIND",data.wind,left,right,top+rowH*2,rowH,"km/h",false);
+            drawSeries(c,"RAIN",data.rain,left,right,top+rowH*3,rowH,"mm",true);
+        }
+        private void drawSeries(Canvas c,String label,double[] v,float left,float right,float top,float h,String unit,boolean bars){
+            double min=Double.POSITIVE_INFINITY,max=Double.NEGATIVE_INFINITY;
+            for(double x:v)if(!Double.isNaN(x)){min=Math.min(min,x);max=Math.max(max,x);}
+            if(min==Double.POSITIVE_INFINITY){min=0;max=1;}
+            if(Math.abs(max-min)<1e-6){max=min+1;}
+            p.setTextSize(15);p.setStyle(Paint.Style.FILL);p.setColor(GREEN);
+            c.drawText(label,12,top+22,p);
+            p.setTextSize(11);p.setColor(DIM);
+            c.drawText(String.format(Locale.US,"%.1f%s",max,unit),12,top+41,p);
+            c.drawText(String.format(Locale.US,"%.1f%s",min,unit),12,top+h-8,p);
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1);p.setColor(Color.argb(70,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+            for(int g=0;g<=4;g++){
+                float y=top+8+(h-18)*g/4f;c.drawLine(left,y,right,y,p);
+            }
+            p.setColor(bars?AMBER:GREEN);p.setStrokeWidth(bars?4:2.5f);
+            float prevX=0,prevY=0;
+            for(int i=0;i<v.length;i++){
+                if(Double.isNaN(v[i]))continue;
+                float x=left+(right-left)*i/Math.max(1,v.length-1);
+                float y=(float)(top+8+(max-v[i])/(max-min)*(h-18));
+                if(bars)c.drawLine(x,top+h-10,x,y,p);
+                else if(i>0)c.drawLine(prevX,prevY,x,y,p);
+                prevX=x;prevY=y;
+            }
+            p.setColor(Color.argb(130,Color.red(DIM),Color.green(DIM),Color.blue(DIM)));p.setStrokeWidth(1);
+            c.drawLine(left,top+h-2,right,top+h-2,p);
+        }
     }
 
     public static class WeatherCompassView extends View {
@@ -1051,6 +1284,27 @@ public class FireMainActivity extends Activity {
         Double speedKnots,track;
         Integer altitudeFeet,verticalRate;
         boolean military,onGround;
+
+        static Aircraft fromOpenSky(JSONArray s,double homeLat,double homeLon){
+            Aircraft a=new Aircraft();
+            a.hex=s.optString(0);
+            a.callsign=s.optString(1).trim();
+            if(a.callsign.length()==0)a.callsign=a.hex.toUpperCase(Locale.US);
+            a.registration="";
+            a.type="";
+            a.description=s.optString(2);
+            a.category="";
+            a.squawk=s.optString(14);
+            a.lon=s.optDouble(5);a.lat=s.optDouble(6);
+            a.onGround=s.optBoolean(8,false);
+            if(!s.isNull(7))a.altitudeFeet=(int)Math.round(s.optDouble(7)*3.28084);
+            if(!s.isNull(9))a.speedKnots=s.optDouble(9)*1.943844;
+            if(!s.isNull(10))a.track=s.optDouble(10);
+            if(!s.isNull(11))a.verticalRate=(int)Math.round(s.optDouble(11)*196.8504);
+            double[] db=distanceBearing(homeLat,homeLon,a.lat,a.lon);
+            a.distanceKm=db[0];a.bearing=db[1];
+            return a;
+        }
 
         static Aircraft from(JSONObject o,double homeLat,double homeLon){
             Aircraft a=new Aircraft();
