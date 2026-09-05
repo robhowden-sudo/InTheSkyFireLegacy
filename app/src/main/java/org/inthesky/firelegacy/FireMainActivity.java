@@ -34,13 +34,14 @@ import java.security.cert.CertificateFactory;
 
 public class FireMainActivity extends Activity {
     private static final int BG = Color.rgb(2,7,5);
-    private static int PANEL = Color.rgb(3,17,13);
-    private static int GREEN = Color.rgb(84,224,255);
-    private static int DIM = Color.rgb(66,142,151);
-    private static int CYAN = Color.rgb(84,224,255);
-    private static int AMBER = Color.rgb(255,191,64);
-    private static int TEXT = Color.rgb(232,255,255);
-    private static int BORDER = Color.rgb(24,113,123);
+    private static final int PANEL = Color.rgb(6,19,13);
+    private static final int PANEL_RAISED = Color.rgb(10,33,22);
+    private static int GREEN = Color.rgb(79,255,159);
+    private static final int DIM = Color.rgb(97,169,129);
+    private static final int CYAN = Color.rgb(102,228,255);
+    private static final int AMBER = Color.rgb(255,194,92);
+    private static final int TEXT = Color.rgb(225,255,238);
+    private static final int BORDER = Color.rgb(48,110,77);
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(3);
@@ -107,27 +108,21 @@ public class FireMainActivity extends Activity {
     }
 
     private void applyTheme(String theme) {
-        PANEL = Color.rgb(3,17,13);
-        TEXT = Color.rgb(232,255,255);
-        AMBER = Color.rgb(255,191,64);
-        if ("AMBER".equals(theme)) {
-            GREEN=Color.rgb(255,191,64); CYAN=Color.rgb(255,214,110); DIM=Color.rgb(170,133,69); BORDER=Color.rgb(131,94,28);
-        } else if ("CYAN".equals(theme)) {
-            GREEN=Color.rgb(84,224,255); CYAN=Color.rgb(84,224,255); DIM=Color.rgb(66,142,151); BORDER=Color.rgb(24,113,123);
-        } else if ("RED".equals(theme)) {
-            GREEN=Color.rgb(255,92,109); CYAN=Color.rgb(255,128,139); DIM=Color.rgb(153,76,83); BORDER=Color.rgb(121,45,54);
-        } else if ("VIOLET".equals(theme)) {
-            GREEN=Color.rgb(188,139,255); CYAN=Color.rgb(208,174,255); DIM=Color.rgb(125,91,168); BORDER=Color.rgb(90,60,126);
-        } else {
-            GREEN=Color.rgb(84,224,255); CYAN=Color.rgb(84,224,255); DIM=Color.rgb(66,142,151); BORDER=Color.rgb(24,113,123);
-        }
+        if ("AMBER".equals(theme)) GREEN = AMBER;
+        else if ("CYAN".equals(theme)) GREEN = CYAN;
+        else if ("RED".equals(theme)) GREEN = Color.rgb(255,102,119);
+        else if ("VIOLET".equals(theme)) GREEN = Color.rgb(183,140,255);
+        else if ("CUSTOM".equals(theme)) {
+            try { GREEN = Color.parseColor(prefs.getString("customAccent","#4FFF9F")); }
+            catch(Exception ignored) { GREEN = Color.rgb(79,255,159); }
+        } else GREEN = Color.rgb(79,255,159);
     }
 
     private GradientDrawable panelBackground(boolean strong) {
         GradientDrawable g=new GradientDrawable();
-        g.setColor(strong?Color.rgb(2,14,11):PANEL);
-        g.setStroke(dp(strong?2:1), strong?CYAN:BORDER);
-        g.setCornerRadius(dp(3));
+        g.setColor(strong?PANEL_RAISED:PANEL);
+        g.setStroke(dp(1), strong?GREEN:BORDER);
+        g.setCornerRadius(dp(5));
         return g;
     }
 
@@ -1157,7 +1152,7 @@ public class FireMainActivity extends Activity {
             final ArrayList<LegacyLaunch> loaded=new ArrayList<LegacyLaunch>();
             String error=null;
             try {
-                String launchUrl="https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10";
+                String launchUrl="https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=12&ordering=net";
                 JSONObject root;
                 boolean launchCached=false;
                 try { root=getJson(launchUrl); }
@@ -1193,27 +1188,67 @@ public class FireMainActivity extends Activity {
                 launchList.clear();
                 launchList.addAll(loaded);
                 if(finalError!=null && launchList.isEmpty()) launchSummary.setText(finalError);
+                else if(launchList.isEmpty()) launchSummary.setText("Launch service returned no parseable upcoming missions.");
                 else renderLaunches();
             });
         });
     }
 
     private long parseIsoMillis(String iso) {
-        if(iso==null||iso.length()==0)return 0;
-        String[] patterns={
-            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-            "yyyy-MM-dd'T'HH:mm:ssXXX",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        };
-        for(String pattern:patterns){
-            try{
-                SimpleDateFormat f=new SimpleDateFormat(pattern,Locale.US);
-                f.setTimeZone(TimeZone.getTimeZone("UTC"));
-                Date d=f.parse(iso);
-                if(d!=null)return d.getTime();
-            }catch(Exception ignored){}
+        if(iso==null)return 0L;
+        try {
+            String value=iso.trim();
+            if(value.length()<19)return 0L;
+
+            int year=Integer.parseInt(value.substring(0,4));
+            int month=Integer.parseInt(value.substring(5,7));
+            int day=Integer.parseInt(value.substring(8,10));
+            int hour=Integer.parseInt(value.substring(11,13));
+            int minute=Integer.parseInt(value.substring(14,16));
+            int second=Integer.parseInt(value.substring(17,19));
+
+            int millis=0;
+            int dot=value.indexOf('.',19);
+            int zoneStart=19;
+            if(dot==19){
+                int i=20;
+                StringBuilder frac=new StringBuilder();
+                while(i<value.length() && Character.isDigit(value.charAt(i)) && frac.length()<3){
+                    frac.append(value.charAt(i++));
+                }
+                while(frac.length()<3)frac.append('0');
+                if(frac.length()>0)millis=Integer.parseInt(frac.toString());
+                zoneStart=i;
+                while(zoneStart<value.length() && Character.isDigit(value.charAt(zoneStart)))zoneStart++;
+            }
+
+            Calendar cal=Calendar.getInstance(TimeZone.getTimeZone("UTC"),Locale.US);
+            cal.clear();
+            cal.set(Calendar.YEAR,year);
+            cal.set(Calendar.MONTH,month-1);
+            cal.set(Calendar.DAY_OF_MONTH,day);
+            cal.set(Calendar.HOUR_OF_DAY,hour);
+            cal.set(Calendar.MINUTE,minute);
+            cal.set(Calendar.SECOND,second);
+            cal.set(Calendar.MILLISECOND,millis);
+            long utc=cal.getTimeInMillis();
+
+            if(value.endsWith("Z"))return utc;
+
+            int plus=value.indexOf('+',zoneStart);
+            int minus=value.indexOf('-',zoneStart);
+            int pos=plus>=0?plus:minus;
+            if(pos>=0 && pos+5<value.length()){
+                int sign=value.charAt(pos)=='-'?-1:1;
+                int zh=Integer.parseInt(value.substring(pos+1,pos+3));
+                int zm=Integer.parseInt(value.substring(pos+4,pos+6));
+                long offset=(zh*60L+zm)*60_000L*sign;
+                return utc-offset;
+            }
+            return utc;
+        } catch(Exception e) {
+            return 0L;
         }
-        return 0;
     }
 
     private void renderLaunches() {
@@ -1299,8 +1334,8 @@ public class FireMainActivity extends Activity {
         page.addView(locate);
 
         page.addView(text("THEME / ACCENT",13,DIM));
-        final String[] themeIds={"PHOSPHOR","AMBER","CYAN","RED","VIOLET"};
-        final String[] themeLabels={"Native Cyan / Teal","Amber Radar","Ice Cyan","Red Tactical","Violet Night"};
+        final String[] themeIds={"PHOSPHOR","AMBER","CYAN","RED","VIOLET","CUSTOM"};
+        final String[] themeLabels={"Green","Amber","Ice blue","Red","Violet","Custom"};
         Spinner theme=new Spinner(this);
         theme.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, themeLabels));
         int themeIndex=0;
@@ -1308,6 +1343,9 @@ public class FireMainActivity extends Activity {
         for(int i=0;i<themeIds.length;i++) if(themeIds[i].equals(savedTheme)) themeIndex=i;
         theme.setSelection(themeIndex);
         page.addView(theme);
+
+        EditText customAccent=field(prefs.getString("customAccent","#4FFF9F"),"Custom accent #RRGGBB");
+        page.addView(customAccent);
 
         page.addView(text("DISPLAY UNITS",13,DIM));
 
@@ -1433,7 +1471,8 @@ public class FireMainActivity extends Activity {
                     .putBoolean("trails",trails.isChecked())
                     .putString("radarStyle",styleIds[style.getSelectedItemPosition()])
                     .putInt("orientation",orientation.getSelectedItemPosition()*90)
-                    .putString("theme",chosenTheme).apply();
+                    .putString("theme",chosenTheme)
+                    .putString("customAccent",customAccent.getText().toString().trim()).apply();
 
                 applyTheme(chosenTheme);
                 Toast.makeText(this,"Settings saved",Toast.LENGTH_SHORT).show();
