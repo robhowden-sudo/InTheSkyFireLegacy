@@ -297,22 +297,32 @@ public class FireMainActivity extends Activity {
         final double lat = currentLat(), lon = currentLon();
         final int rangeKm = prefs.getInt("range", 40);
         final int radiusNm = Math.max(1, (int)Math.ceil(rangeKm / 1.852));
+        final String primaryUrl="https://api.adsb.lol/v2/point/"+lat+"/"+lon+"/"+radiusNm;
+        final String secondaryUrl=openSkyUrl(lat,lon,rangeKm);
+
         io.execute(() -> {
             try {
                 final ArrayList<Aircraft> list = new ArrayList<Aircraft>();
-                String radarSource = "ADSB.LOL";
+                String radarSource;
                 try {
-                    JSONObject root = getJson("https://api.adsb.lol/v2/point/"+lat+"/"+lon+"/"+radiusNm);
-                    JSONArray arr = root.optJSONArray("ac");
-                    if (arr != null) for (int i=0;i<arr.length();i++) {
-                        JSONObject o = arr.optJSONObject(i); if (o == null) continue;
-                        if (!o.has("lat") || !o.has("lon")) continue;
-                        Aircraft a = Aircraft.from(o, lat, lon);
-                        if (a.distanceKm <= rangeKm) list.add(a);
+                    parseAdsbRadar(getJson(primaryUrl),lat,lon,rangeKm,list);
+                    radarSource="ADSB.LOL";
+                } catch(Exception primaryError) {
+                    try {
+                        parseOpenSkyRadar(getJson(secondaryUrl),lat,lon,rangeKm,list);
+                        radarSource="OPENSKY FALLBACK";
+                    } catch(Exception secondaryError) {
+                        JSONObject cached=readJsonCache(primaryUrl,10*60_000L);
+                        if(cached!=null){
+                            parseAdsbRadar(cached,lat,lon,rangeKm,list);
+                            radarSource="ADSB.LOL CACHE";
+                        } else {
+                            cached=readJsonCache(secondaryUrl,10*60_000L);
+                            if(cached==null) throw secondaryError;
+                            parseOpenSkyRadar(cached,lat,lon,rangeKm,list);
+                            radarSource="OPENSKY CACHE";
+                        }
                     }
-                } catch (Exception primaryRadarError) {
-                    radarSource = "OPENSKY FALLBACK";
-                    list.addAll(loadOpenSkyFallback(lat, lon, rangeKm));
                 }
                 final String sourceLabel = radarSource;
                 Collections.sort(list, (a,b) -> Double.compare(a.distanceKm,b.distanceKm));
@@ -320,39 +330,56 @@ public class FireMainActivity extends Activity {
                     Set<String> now = new HashSet<String>();
                     for (Aircraft a : list) now.add(a.hex);
                     Aircraft entered = null;
-                    if (previousContacts != null) {
+                    if (previousContacts != null && !sourceLabel.contains("CACHE")) {
                         for (Aircraft a : list) {
                             if (!previousContacts.contains(a.hex)) { entered = a; break; }
                         }
                     }
-                    previousContacts = now;
+                    if(!sourceLabel.contains("CACHE")) previousContacts = now;
                     aircraft = list;
                     if (radarView != null) radarView.setAircraft(list, rangeKm);
                     status.setText(list.size()+" CONTACTS  //  "+distanceLabel(rangeKm)+"  //  "+sourceLabel);
                     if (entered != null) selectAircraft(entered);
                 });
             } catch (final Exception e) {
-                ui.post(() -> status.setText("RADAR ERROR: "+shortError(e)));
+                ui.post(() -> status.setText("RADAR UNAVAILABLE // "+shortError(e)));
             }
         });
     }
 
-    private ArrayList<Aircraft> loadOpenSkyFallback(double lat,double lon,int rangeKm) throws Exception {
+    private String openSkyUrl(double lat,double lon,int rangeKm) {
         double latSpan=rangeKm/111.0;
         double cos=Math.max(0.2,Math.cos(Math.toRadians(lat)));
         double lonSpan=rangeKm/(111.0*cos);
-        String url=String.format(Locale.US,
+        return String.format(Locale.US,
             "https://opensky-network.org/api/states/all?lamin=%.5f&lomin=%.5f&lamax=%.5f&lomax=%.5f",
             lat-latSpan,lon-lonSpan,lat+latSpan,lon+lonSpan);
-        JSONObject root=getJson(url);
-        JSONArray states=root.optJSONArray("states");
-        ArrayList<Aircraft> out=new ArrayList<Aircraft>();
-        if(states!=null) for(int i=0;i<states.length();i++){
-            JSONArray s=states.optJSONArray(i);
-            if(s==null || s.length()<11 || s.isNull(5) || s.isNull(6)) continue;
-            Aircraft a=Aircraft.fromOpenSky(s,lat,lon);
-            if(a.distanceKm<=rangeKm) out.add(a);
+    }
+
+    private void parseAdsbRadar(JSONObject root,double lat,double lon,int rangeKm,List<Aircraft> out) {
+        JSONArray arr=root.optJSONArray("ac");
+        if(arr==null)return;
+        for(int i=0;i<arr.length();i++){
+            JSONObject o=arr.optJSONObject(i); if(o==null||!o.has("lat")||!o.has("lon"))continue;
+            Aircraft a=Aircraft.from(o,lat,lon);
+            if(a.distanceKm<=rangeKm)out.add(a);
         }
+    }
+
+    private void parseOpenSkyRadar(JSONObject root,double lat,double lon,int rangeKm,List<Aircraft> out) {
+        JSONArray states=root.optJSONArray("states");
+        if(states==null)return;
+        for(int i=0;i<states.length();i++){
+            JSONArray st=states.optJSONArray(i);
+            if(st==null||st.length()<11||st.isNull(5)||st.isNull(6))continue;
+            Aircraft a=Aircraft.fromOpenSky(st,lat,lon);
+            if(a.distanceKm<=rangeKm)out.add(a);
+        }
+    }
+
+    private ArrayList<Aircraft> loadOpenSkyFallback(double lat,double lon,int rangeKm) throws Exception {
+        ArrayList<Aircraft> out=new ArrayList<Aircraft>();
+        parseOpenSkyRadar(getJson(openSkyUrl(lat,lon,rangeKm)),lat,lon,rangeKm,out);
         return out;
     }
 
@@ -375,9 +402,15 @@ public class FireMainActivity extends Activity {
             String wikiText = "";
             Bitmap bitmap = null;
             try {
-                JSONObject m = getJson("https://api.adsbdb.com/v0/aircraft/"+a.hex)
-                    .optJSONObject("response").optJSONObject("aircraft");
+                String url="https://api.adsbdb.com/v0/aircraft/"+a.hex;
+                JSONObject root;
+                boolean cached=false;
+                try { root=getJson(url); }
+                catch(Exception liveError) { root=readJsonCache(url,7L*24*60*60_000); cached=root!=null; if(root==null)throw liveError; }
+                JSONObject response=root.optJSONObject("response");
+                JSONObject m=response==null?null:response.optJSONObject("aircraft");
                 if (m != null) meta =
+                    (cached?"ADSBDB CACHE\n":"")+
                     nonBlank(m.optString("manufacturer"))+" "+nonBlank(m.optString("type"))+
                     "\nOwner: "+nonBlank(m.optString("registered_owner"))+
                     "\nCountry: "+nonBlank(m.optString("registered_owner_country_name"));
@@ -387,7 +420,11 @@ public class FireMainActivity extends Activity {
                 String clean = a.callsign == null ? "" : a.callsign.trim();
                 if (clean.length() > 0 && !clean.equalsIgnoreCase(a.hex)) {
                     String encCall = URLEncoder.encode(clean, "UTF-8");
-                    JSONObject rr = getJson("https://api.adsbdb.com/v0/callsign/" + encCall);
+                    String routeUrl="https://api.adsbdb.com/v0/callsign/" + encCall;
+                    JSONObject rr;
+                    boolean routeCached=false;
+                    try { rr=getJson(routeUrl); }
+                    catch(Exception liveError) { rr=readJsonCache(routeUrl,3L*24*60*60_000); routeCached=rr!=null; if(rr==null)throw liveError; }
                     JSONObject response = rr.optJSONObject("response");
                     JSONObject route = response == null ? null : response.optJSONObject("flightroute");
                     if (route == null && response != null) route = response.optJSONObject("flightRoute");
@@ -396,6 +433,7 @@ public class FireMainActivity extends Activity {
                         JSONObject dest = route.optJSONObject("destination");
                         JSONObject airline = route.optJSONObject("airline");
                         routeText =
+                            (routeCached?"ADSBDB ROUTE CACHE\n":"")+
                             "Flight: " + nonBlank(route.optString("callsign").length() > 0 ? route.optString("callsign") : clean) + "\n" +
                             "Airline: " + (airline == null ? "--" : nonBlank(airline.optString("name"))) + "\n" +
                             "Origin: " + airportLabel(origin) + "\n" +
@@ -443,6 +481,7 @@ public class FireMainActivity extends Activity {
                     aircraftReference.setText(reference.length()==0 ?
                         "Aircraft-type reference unavailable." : reference);
                     if (finalBitmap != null) aircraftImage.setImageBitmap(finalBitmap);
+                    else aircraftImage.setImageBitmap(createAircraftPlaceholder(a));
                 }
             });
         });
@@ -521,20 +560,34 @@ public class FireMainActivity extends Activity {
     private void refreshWeather() {
         weatherStatus.setText("WEATHER // "+locationLabel()+" // UPDATING");
         final double lat=currentLat(), lon=currentLon();
+        final String metUrl="https://api.met.no/weatherapi/locationforecast/2.0/compact?lat="+lat+"&lon="+lon;
+        final String openUrl="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
+            "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code"+
+            "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&forecast_days=2";
         io.execute(() -> {
             try {
                 WeatherDisplay wx;
-                String provider="MET NORWAY";
+                String provider;
                 try {
-                    JSONObject root=getJson("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat="+lat+"&lon="+lon);
-                    JSONArray ts=root.getJSONObject("properties").getJSONArray("timeseries");
-                    wx=parseMetForecast(ts);
-                } catch (Exception metError) {
-                    provider="OPEN-METEO";
-                    String url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
-                        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code"+
-                        "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&forecast_days=2";
-                    wx=parseOpenMeteo(getJson(url));
+                    JSONObject root=getJson(metUrl);
+                    wx=parseMetForecast(root.getJSONObject("properties").getJSONArray("timeseries"));
+                    provider="MET NORWAY";
+                } catch(Exception metLiveError) {
+                    try {
+                        wx=parseOpenMeteo(getJson(openUrl));
+                        provider="OPEN-METEO FALLBACK";
+                    } catch(Exception openLiveError) {
+                        JSONObject cached=readJsonCache(metUrl,2*60*60_000L);
+                        if(cached!=null){
+                            wx=parseMetForecast(cached.getJSONObject("properties").getJSONArray("timeseries"));
+                            provider="MET NORWAY CACHE";
+                        } else {
+                            cached=readJsonCache(openUrl,2*60*60_000L);
+                            if(cached==null) throw openLiveError;
+                            wx=parseOpenMeteo(cached);
+                            provider="OPEN-METEO CACHE";
+                        }
+                    }
                 }
                 final WeatherDisplay display=wx;
                 final String source=provider;
@@ -555,8 +608,8 @@ public class FireMainActivity extends Activity {
                 });
             } catch(final Exception e) {
                 ui.post(() -> {
-                    weatherStatus.setText("WEATHER ERROR");
-                    weatherCurrent.setText(shortError(e));
+                    weatherStatus.setText("WEATHER UNAVAILABLE");
+                    weatherCurrent.setText("NO LIVE OR RECENT CACHED WEATHER\n"+shortError(e));
                 });
             }
         });
@@ -686,6 +739,7 @@ public class FireMainActivity extends Activity {
     static class LegacyLaunch {
         final String name,status,mission,pad,location;
         final long netMillis;
+        String sourceNote="";
         LegacyLaunch(String name,long netMillis,String status,String mission,String pad,String location){
             this.name=name;this.netMillis=netMillis;this.status=status;this.mission=mission;this.pad=pad;this.location=location;
         }
@@ -811,7 +865,11 @@ public class FireMainActivity extends Activity {
             final ArrayList<LegacyLaunch> loaded=new ArrayList<LegacyLaunch>();
             String error=null;
             try {
-                JSONObject root=getJson("https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10");
+                String launchUrl="https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10";
+                JSONObject root;
+                boolean launchCached=false;
+                try { root=getJson(launchUrl); }
+                catch(Exception liveError) { root=readJsonCache(launchUrl,6*60*60_000L); launchCached=root!=null; if(root==null)throw liveError; }
                 JSONArray results=root.optJSONArray("results");
                 if(results!=null) for(int i=0;i<results.length();i++){
                     JSONObject item=results.optJSONObject(i);
@@ -834,6 +892,7 @@ public class FireMainActivity extends Activity {
                     ));
                 }
                 Collections.sort(loaded,(a,b)->Long.compare(a.netMillis,b.netMillis));
+                if(launchCached && !loaded.isEmpty()) loaded.get(0).sourceNote="THE SPACE DEVS CACHE";
             } catch(Exception e) {
                 error="Launch feed unavailable: "+shortError(e);
             }
@@ -876,6 +935,7 @@ public class FireMainActivity extends Activity {
         StringBuilder out=new StringBuilder();
 
         LegacyLaunch first=launchList.get(0);
+        if(first.sourceNote.length()>0) out.append(first.sourceNote).append("\n");
         out.append("NEXT  ").append(launchCountdown(first.netMillis-now)).append("\n");
         out.append(first.name).append("\n");
         out.append(first.status.toUpperCase(Locale.US)).append("  •  ")
@@ -1103,7 +1163,9 @@ public class FireMainActivity extends Activity {
     private WeatherHistoryData loadWeatherHistory(double lat,double lon) throws Exception {
         String url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
             "&past_hours=24&forecast_hours=1&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,rain&timezone=auto";
-        JSONObject root=getJson(url);
+        JSONObject root;
+        try { root=getJson(url); }
+        catch(Exception liveError) { root=readJsonCache(url,6*60*60_000L); if(root==null)throw liveError; }
         JSONObject h=root.getJSONObject("hourly");
         JSONArray temp=h.getJSONArray("temperature_2m");
         JSONArray hum=h.getJSONArray("relative_humidity_2m");
@@ -1126,7 +1188,11 @@ public class FireMainActivity extends Activity {
     private String loadWeatherWarnings(double lat,double lon) throws Exception {
         // Fire target is UK-first; use the official Met Office national warning RSS.
         try {
-            String xml=getText("https://weather.metoffice.gov.uk/public/data/PWSCache/WarningsRSS/Region/UK");
+            String warningUrl="https://weather.metoffice.gov.uk/public/data/PWSCache/WarningsRSS/Region/UK";
+            String xml;
+            boolean cachedWarning=false;
+            try { xml=getText(warningUrl); }
+            catch(Exception liveError) { xml=readTextCache(warningUrl,6*60*60_000L); cachedWarning=xml!=null; if(xml==null)throw liveError; }
             ArrayList<String> titles=new ArrayList<String>();
             int pos=0;
             while(titles.size()<4){
@@ -1137,7 +1203,7 @@ public class FireMainActivity extends Activity {
                 if(title.length()>0 && !title.toLowerCase(Locale.US).contains("weather warnings")) titles.add(title);
             }
             if(titles.isEmpty()) return "MET OFFICE // No warning entries returned. This does not guarantee no local hazard.";
-            StringBuilder out=new StringBuilder("MET OFFICE // ACTIVE / RECENT\n");
+            StringBuilder out=new StringBuilder(cachedWarning?"MET OFFICE CACHE // RECENT\n":"MET OFFICE // ACTIVE / RECENT\n");
             for(String t:titles)out.append("⚠  ").append(t).append("\n");
             return out.toString().trim();
         } catch(Exception primary) {
@@ -1166,7 +1232,9 @@ public class FireMainActivity extends Activity {
             if(code<200||code>299)throw new IOException("HTTP "+code);
             BufferedReader br=new BufferedReader(new InputStreamReader(con.getInputStream(),"UTF-8"));
             StringBuilder sb=new StringBuilder();String line;while((line=br.readLine())!=null)sb.append(line).append('\n');
-            return sb.toString();
+            String body=sb.toString();
+            writeCache(cacheFile("text",url),body);
+            return body;
         } finally {con.disconnect();}
     }
 
@@ -1188,6 +1256,40 @@ public class FireMainActivity extends Activity {
         }catch(Exception e){return null;}
     }
 
+    private File cacheFile(String prefix,String key) {
+        return new File(getCacheDir(),prefix+"_"+Integer.toHexString(key.hashCode())+".cache");
+    }
+
+    private void writeCache(File file,String body) {
+        try{
+            FileOutputStream out=new FileOutputStream(file);
+            out.write(body.getBytes("UTF-8"));
+            out.close();
+        }catch(Exception ignored){}
+    }
+
+    private String readCache(File file,long maxAgeMs) {
+        try{
+            if(!file.exists() || System.currentTimeMillis()-file.lastModified()>maxAgeMs)return null;
+            BufferedReader br=new BufferedReader(new InputStreamReader(new FileInputStream(file),"UTF-8"));
+            StringBuilder sb=new StringBuilder();String line;
+            while((line=br.readLine())!=null)sb.append(line).append('\n');
+            br.close();
+            return sb.toString();
+        }catch(Exception e){return null;}
+    }
+
+    private JSONObject readJsonCache(String url,long maxAgeMs) {
+        try{
+            String body=readCache(cacheFile("json",url),maxAgeMs);
+            return body==null?null:new JSONObject(body);
+        }catch(Exception e){return null;}
+    }
+
+    private String readTextCache(String url,long maxAgeMs) {
+        return readCache(cacheFile("text",url),maxAgeMs);
+    }
+
     private JSONObject getJson(String url) throws Exception {
         HttpsURLConnection c=(HttpsURLConnection)new URL(url).openConnection();
         if (url.startsWith("https://api.met.no/") && weatherSslFactory != null) {
@@ -1200,7 +1302,10 @@ public class FireMainActivity extends Activity {
             if(code<200||code>299)throw new IOException("HTTP "+code);
             BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),"UTF-8"));
             StringBuilder sb=new StringBuilder();String line;while((line=br.readLine())!=null)sb.append(line);
-            return new JSONObject(sb.toString());
+            String body=sb.toString();
+            JSONObject parsed=new JSONObject(body);
+            writeCache(cacheFile("json",url),body);
+            return parsed;
         }finally{c.disconnect();}
     }
 
@@ -1214,6 +1319,25 @@ public class FireMainActivity extends Activity {
             if(b!=null){FileOutputStream out=new FileOutputStream(f);b.compress(Bitmap.CompressFormat.JPEG,82,out);out.close();}
             return b;
         }finally{c.disconnect();}
+    }
+
+    private Bitmap createAircraftPlaceholder(Aircraft a) {
+        Bitmap b=Bitmap.createBitmap(640,300,Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(b);
+        canvas.drawColor(Color.rgb(3,12,8));
+        Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(GREEN);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(8);
+        float cx=320,cy=135;
+        Path q=new Path();
+        q.moveTo(cx,45);q.lineTo(cx+22,105);q.lineTo(cx+150,150);q.lineTo(cx+150,170);
+        q.lineTo(cx+25,150);q.lineTo(cx+18,225);q.lineTo(cx,240);
+        q.lineTo(cx-18,225);q.lineTo(cx-25,150);q.lineTo(cx-150,170);q.lineTo(cx-150,150);
+        q.lineTo(cx-22,105);q.close();
+        canvas.drawPath(q,p);
+        p.setStyle(Paint.Style.FILL);p.setTextAlign(Paint.Align.CENTER);p.setTypeface(Typeface.MONOSPACE);
+        p.setTextSize(28);p.setColor(TEXT);
+        canvas.drawText(a.type.length()>0?a.type:"AIRCRAFT REFERENCE",cx,282,p);
+        return b;
     }
 
     private String airportLabel(JSONObject airport) {
