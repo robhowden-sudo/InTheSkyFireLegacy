@@ -43,4 +43,4 @@ The APK inside the artifact is `app-debug.apk`.
 
 ## Status
 
-This is an early legacy build. First milestone: install, launch and prove live Radar/Weather HTTPS access on the Fire HD 10. Layout and feature polish follow after device acceptance.
+This is an early legacy build dedicated to Android 5-era Fire hardware. First milestone: install, launch and prove live Radar/Weather HTTPS access on the Fire HD 10. Layout and feature polish follow after device acceptance.
