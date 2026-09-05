@@ -49,7 +49,7 @@ public class FireMainActivity extends Activity {
     private LinearLayout aircraftCard;
     private ImageView aircraftImage;
     private TextView aircraftTitle, aircraftDetails, aircraftReference;
-    private TextView weatherBody, weatherStatus;
+    private TextView weatherBody, weatherStatus, weatherCurrent;
     private TextView timeClock, timeDate, timeZones;
     private Runnable radarTick, clockTick;
     private SSLSocketFactory weatherSslFactory;
@@ -164,11 +164,44 @@ public class FireMainActivity extends Activity {
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
-        TextView status = text("LIVE AIRCRAFT", 11, DIM);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView status = text("LIVE AIRCRAFT", 12, DIM);
+        controls.addView(status, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        final boolean miles = prefs.getBoolean("miles", false);
+        final int[] rangeValues = {5,10,25,50,100,200};
+        String[] rangeLabels = new String[rangeValues.length];
+        for (int i=0;i<rangeValues.length;i++) rangeLabels[i] = rangeValues[i] + (miles ? " mi" : " km");
+
+        Spinner rangePicker = new Spinner(this);
+        rangePicker.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, rangeLabels));
+        int currentDisplay = miles ? (int)Math.round(prefs.getInt("range",40) / 1.609344) : prefs.getInt("range",40);
+        int best = 0, bestDelta = Integer.MAX_VALUE;
+        for (int i=0;i<rangeValues.length;i++) {
+            int d=Math.abs(rangeValues[i]-currentDisplay);
+            if(d<bestDelta){bestDelta=d;best=i;}
+        }
+        rangePicker.setSelection(best, false);
+        rangePicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            boolean first=true;
+            public void onNothingSelected(AdapterView<?> parent) {}
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if(first){first=false;return;}
+                int displayRange=rangeValues[position];
+                int km=miles ? (int)Math.round(displayRange*1.609344) : displayRange;
+                km=Math.max(5,Math.min(320,km));
+                prefs.edit().putInt("range",km).apply();
+                previousContacts=null;
+                if(radarView!=null) radarView.setMiles(miles);
+                refreshRadar(status);
+            }
+        });
+        controls.addView(rangePicker, new LinearLayout.LayoutParams(dp(125), dp(48)));
+
         Button refresh = button("SCAN NOW");
         refresh.setOnClickListener(v -> refreshRadar(status));
-        controls.addView(status, new LinearLayout.LayoutParams(0, dp(46), 1f));
-        controls.addView(refresh, new LinearLayout.LayoutParams(dp(118), dp(46)));
+        controls.addView(refresh, new LinearLayout.LayoutParams(dp(112), dp(48)));
         page.addView(controls);
 
         LinearLayout body = new LinearLayout(this);
@@ -179,6 +212,7 @@ public class FireMainActivity extends Activity {
         radarView.setStyle(prefs.getString("radarStyle", "classic"));
         radarView.setOrientation(prefs.getInt("orientation", 0));
         radarView.setTrails(prefs.getBoolean("trails", true));
+        radarView.setMiles(prefs.getBoolean("miles", false));
         radarView.setOnAircraftTapListener(this::selectAircraft);
         LinearLayout.LayoutParams radarLp = new LinearLayout.LayoutParams(0, -1, 7f);
         radarLp.setMargins(dp(6), dp(2), dp(4), dp(6));
@@ -260,7 +294,7 @@ public class FireMainActivity extends Activity {
                     previousContacts = now;
                     aircraft = list;
                     if (radarView != null) radarView.setAircraft(list, rangeKm);
-                    status.setText(list.size()+" CONTACTS  //  "+rangeKm+" km");
+                    status.setText(list.size()+" CONTACTS  //  "+distanceLabel(rangeKm));
                     if (entered != null) selectAircraft(entered);
                 });
             } catch (final Exception e) {
@@ -276,7 +310,7 @@ public class FireMainActivity extends Activity {
         aircraftDetails.setText(
             "ICAO "+a.hex.toUpperCase(Locale.US)+"   REG "+empty(a.registration)+"\n"+
             "ALT "+fmtInt(a.altitudeFeet)+" ft   SPD "+fmt(a.speedKnots)+" kt   HDG "+fmt(a.track)+"°\n"+
-            "RANGE "+String.format(Locale.US,"%.1f km",a.distanceKm)+"   BRG "+String.format(Locale.US,"%.0f°",a.bearing)+"\n"+
+            "RANGE "+distanceLabel(a.distanceKm)+"   BRG "+String.format(Locale.US,"%.0f°",a.bearing)+"\n"+
             empty(a.description)
         );
         aircraftReference.setText("Loading aircraft reference…");
@@ -329,7 +363,7 @@ public class FireMainActivity extends Activity {
                 }
             } catch (Exception ignored) {}
 
-            final String reference = (meta.trim()+"\n"+wikiText.trim()).trim();
+            final String reference = (meta.trim()+"\n\n"+routeText.trim()+"\n\n"+wikiText.trim()).trim();
             final Bitmap finalBitmap = bitmap;
             ui.post(() -> {
                 if (a.hex.equals(selectedHex)) {
@@ -343,14 +377,41 @@ public class FireMainActivity extends Activity {
 
     private void showWeather() {
         clearPage();
-        ScrollView sc = new ScrollView(this);
-        LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setBackgroundColor(BG);
-        weatherStatus = text("WEATHER // "+locationLabel(), 16, GREEN);
-        Button refresh = button("REFRESH WEATHER");
+
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(10),dp(8),dp(10),dp(8));
+        page.setBackgroundColor(BG);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        weatherStatus = text("WEATHER // "+locationLabel(), 17, GREEN);
+        Button refresh = button("REFRESH");
         refresh.setOnClickListener(v -> refreshWeather());
-        weatherBody = text("Loading MET Norway forecast…", 13, TEXT);
-        page.addView(weatherStatus); page.addView(refresh); page.addView(weatherBody);
-        sc.addView(page); pageHost.addView(sc);
+        top.addView(weatherStatus,new LinearLayout.LayoutParams(0,dp(48),1f));
+        top.addView(refresh,new LinearLayout.LayoutParams(dp(110),dp(48)));
+        page.addView(top);
+
+        weatherCurrent = text("LOADING CURRENT CONDITIONS…", 18, TEXT);
+        weatherCurrent.setBackgroundColor(PANEL);
+        weatherCurrent.setPadding(dp(14),dp(12),dp(14),dp(12));
+        page.addView(weatherCurrent,new LinearLayout.LayoutParams(-1,dp(118)));
+
+        TextView outlookTitle=text("12 HOUR OUTLOOK",12,DIM);
+        page.addView(outlookTitle);
+
+        ScrollView forecastScroll=new ScrollView(this);
+        weatherBody=text("Loading forecast…",14,TEXT);
+        weatherBody.setBackgroundColor(Color.rgb(3,15,11));
+        weatherBody.setPadding(dp(14),dp(10),dp(14),dp(10));
+        forecastScroll.addView(weatherBody);
+        page.addView(forecastScroll,new LinearLayout.LayoutParams(-1,0,1f));
+
+        TextView source=text("Primary: MET Norway  •  automatic Open-Meteo fallback for Fire OS TLS compatibility",10,DIM);
+        page.addView(source);
+
+        pageHost.addView(page);
         refreshWeather();
     }
 
@@ -359,70 +420,120 @@ public class FireMainActivity extends Activity {
         final double lat=currentLat(), lon=currentLon();
         io.execute(() -> {
             try {
-                String out;
-                String provider = "MET NORWAY";
+                WeatherDisplay wx;
+                String provider="MET NORWAY";
                 try {
                     JSONObject root=getJson("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat="+lat+"&lon="+lon);
                     JSONArray ts=root.getJSONObject("properties").getJSONArray("timeseries");
-                    out = formatMetForecast(ts);
+                    wx=parseMetForecast(ts);
                 } catch (Exception metError) {
-                    provider = "OPEN-METEO FALLBACK";
-                    String url = "https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
+                    provider="OPEN-METEO";
+                    String url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+
+                        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"+
                         "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&forecast_days=2";
-                    JSONObject root = getJson(url);
-                    out = formatOpenMeteo(root);
+                    wx=parseOpenMeteo(getJson(url));
                 }
-                final String display=out;
+                final WeatherDisplay display=wx;
                 final String source=provider;
                 ui.post(() -> {
                     weatherStatus.setText("WEATHER // "+locationLabel()+" // "+source);
-                    weatherBody.setText(display);
+                    weatherCurrent.setText(display.current);
+                    weatherBody.setText(display.forecast);
                 });
-            }catch(final Exception e){
-                ui.post(() -> weatherStatus.setText("WEATHER ERROR: "+shortError(e)));
+            } catch(final Exception e) {
+                ui.post(() -> {
+                    weatherStatus.setText("WEATHER ERROR");
+                    weatherCurrent.setText(shortError(e));
+                });
             }
         });
     }
 
-    private String formatMetForecast(JSONArray ts) throws Exception {
+    private WeatherDisplay parseMetForecast(JSONArray ts) throws Exception {
+        boolean f=prefs.getBoolean("fahrenheit",false);
+        JSONObject first=ts.getJSONObject(0);
+        JSONObject firstData=first.getJSONObject("data");
+        JSONObject d=firstData.getJSONObject("instant").getJSONObject("details");
+        JSONObject next=firstData.optJSONObject("next_1_hours");
+        String symbol=next!=null&&next.optJSONObject("summary")!=null?next.optJSONObject("summary").optString("symbol_code"):"";
+        double temp=d.optDouble("air_temperature");
+        double wind=d.optDouble("wind_speed");
+        double hum=d.optDouble("relative_humidity");
+        double pressure=d.optDouble("air_pressure_at_sea_level",Double.NaN);
+        String current=
+            weatherGlyph(symbol)+"  "+temperatureLabel(temp)+"   "+symbol.replace("_"," ").toUpperCase(Locale.US)+"\n"+
+            "HUMIDITY  "+String.format(Locale.US,"%.0f%%",hum)+"     WIND  "+String.format(Locale.US,"%.1f m/s",wind)+
+            (Double.isNaN(pressure)?"":"     PRESSURE  "+String.format(Locale.US,"%.0f hPa",pressure));
+
         StringBuilder sb=new StringBuilder();
         int count=Math.min(12,ts.length());
         for(int i=0;i<count;i++){
             JSONObject p=ts.getJSONObject(i);
-            JSONObject d=p.getJSONObject("data").getJSONObject("instant").getJSONObject("details");
-            String time=p.optString("time");
-            double temp=d.optDouble("air_temperature");
-            double wind=d.optDouble("wind_speed");
-            double hum=d.optDouble("relative_humidity");
-            String symbol="";
-            JSONObject next=p.getJSONObject("data").optJSONObject("next_1_hours");
-            if(next!=null && next.optJSONObject("summary")!=null) symbol=next.optJSONObject("summary").optString("symbol_code");
-            sb.append(shortIso(time)).append("  ")
-              .append(String.format(Locale.US,"%.1f°C",temp)).append("  ")
-              .append(String.format(Locale.US,"wind %.1f m/s",wind)).append("  ")
-              .append(String.format(Locale.US,"RH %.0f%%",hum)).append("  ")
-              .append(symbol.replace("_"," ")).append("\n\n");
+            JSONObject pd=p.getJSONObject("data");
+            JSONObject details=pd.getJSONObject("instant").getJSONObject("details");
+            JSONObject n=pd.optJSONObject("next_1_hours");
+            String code=n!=null&&n.optJSONObject("summary")!=null?n.optJSONObject("summary").optString("symbol_code"):"";
+            sb.append(String.format(Locale.US,"%-5s  %-2s  %7s   RH %3.0f%%   WIND %4.1f m/s\n",
+                shortIso(p.optString("time")),weatherGlyph(code),temperatureLabel(details.optDouble("air_temperature")),
+                details.optDouble("relative_humidity"),details.optDouble("wind_speed")));
         }
-        return sb.toString();
+        return new WeatherDisplay(current,sb.toString());
     }
 
-    private String formatOpenMeteo(JSONObject root) throws Exception {
-        JSONObject h = root.getJSONObject("hourly");
-        JSONArray times=h.getJSONArray("time");
-        JSONArray temps=h.getJSONArray("temperature_2m");
-        JSONArray hums=h.getJSONArray("relative_humidity_2m");
-        JSONArray winds=h.getJSONArray("wind_speed_10m");
-        JSONArray codes=h.getJSONArray("weather_code");
+    private WeatherDisplay parseOpenMeteo(JSONObject root) throws Exception {
+        JSONObject cur=root.getJSONObject("current");
+        double temp=cur.optDouble("temperature_2m");
+        double hum=cur.optDouble("relative_humidity_2m");
+        double wind=cur.optDouble("wind_speed_10m");
+        int code=cur.optInt("weather_code");
+        String current=
+            weatherGlyph(code)+"  "+temperatureLabel(temp)+"   "+weatherCode(code).toUpperCase(Locale.US)+"\n"+
+            "HUMIDITY  "+String.format(Locale.US,"%.0f%%",hum)+"     WIND  "+String.format(Locale.US,"%.1f km/h",wind);
+
+        JSONObject h=root.getJSONObject("hourly");
+        JSONArray times=h.getJSONArray("time"),temps=h.getJSONArray("temperature_2m"),
+            hums=h.getJSONArray("relative_humidity_2m"),winds=h.getJSONArray("wind_speed_10m"),
+            codes=h.getJSONArray("weather_code");
         StringBuilder sb=new StringBuilder();
         int count=Math.min(12,times.length());
         for(int i=0;i<count;i++){
-            sb.append(shortIso(times.optString(i))).append("  ")
-              .append(String.format(Locale.US,"%.1f°C",temps.optDouble(i))).append("  ")
-              .append(String.format(Locale.US,"wind %.1f km/h",winds.optDouble(i))).append("  ")
-              .append(String.format(Locale.US,"RH %.0f%%",hums.optDouble(i))).append("  ")
-              .append(weatherCode(codes.optInt(i))).append("\n\n");
+            int wc=codes.optInt(i);
+            sb.append(String.format(Locale.US,"%-5s  %-2s  %7s   RH %3.0f%%   WIND %4.1f km/h\n",
+                shortIso(times.optString(i)),weatherGlyph(wc),temperatureLabel(temps.optDouble(i)),
+                hums.optDouble(i),winds.optDouble(i)));
         }
-        return sb.toString();
+        return new WeatherDisplay(current,sb.toString());
+    }
+
+    private String temperatureLabel(double celsius) {
+        if(prefs.getBoolean("fahrenheit",false))
+            return String.format(Locale.US,"%.1f°F",celsius*9.0/5.0+32.0);
+        return String.format(Locale.US,"%.1f°C",celsius);
+    }
+
+    private String weatherGlyph(String code) {
+        if(code==null)return "·";
+        String s=code.toLowerCase(Locale.US);
+        if(s.contains("thunder"))return "⚡";
+        if(s.contains("snow"))return "✳";
+        if(s.contains("rain")||s.contains("sleet"))return "☂";
+        if(s.contains("fog"))return "≋";
+        if(s.contains("cloud"))return "☁";
+        return "☀";
+    }
+
+    private String weatherGlyph(int code) {
+        if(code>=95)return "⚡";
+        if(code>=71&&code<=77)return "✳";
+        if((code>=51&&code<=67)||(code>=80&&code<=82))return "☂";
+        if(code==45||code==48)return "≋";
+        if(code>=1&&code<=3)return "☁";
+        return "☀";
+    }
+
+    static class WeatherDisplay {
+        final String current,forecast;
+        WeatherDisplay(String current,String forecast){this.current=current;this.forecast=forecast;}
     }
 
     private String weatherCode(int code) {
@@ -467,7 +578,9 @@ public class FireMainActivity extends Activity {
         info.addView(timeDate);
         info.addView(localZone);
         info.addView(calendarInfo);
-        info.addView(text("WORLD CLOCKS", 12, DIM));
+        TextView divider=text("────────  WORLD CLOCKS  ────────",12,GREEN);
+        divider.setGravity(Gravity.CENTER);
+        info.addView(divider);
         info.addView(timeZones);
 
         infoScroll.addView(info);
@@ -547,6 +660,19 @@ public class FireMainActivity extends Activity {
         theme.setSelection(themeIndex);
         page.addView(theme);
 
+        page.addView(text("UNITS",13,DIM));
+        CheckBox milesBox=new CheckBox(this);
+        milesBox.setText("Distance in miles (off = kilometres)");
+        milesBox.setTextColor(TEXT);
+        milesBox.setChecked(prefs.getBoolean("miles",false));
+        page.addView(milesBox);
+
+        CheckBox fahrenheitBox=new CheckBox(this);
+        fahrenheitBox.setText("Temperature in °F (off = °C)");
+        fahrenheitBox.setTextColor(TEXT);
+        fahrenheitBox.setChecked(prefs.getBoolean("fahrenheit",false));
+        page.addView(fahrenheitBox);
+
         page.addView(text("RADAR STYLE",13,DIM));
         final String[] styleIds={"classic","tactical","pulse","dual","sonar","atc"};
         final String[] styleLabels={"Classic Scope","Tactical Grid","Centre Pulse","Dual Sweep","Sonar Rings","ATC Tower"};
@@ -574,9 +700,14 @@ public class FireMainActivity extends Activity {
         SeekBar range=new SeekBar(this);
         range.setMax(315);
         range.setProgress(prefs.getInt("range",40)-5);
-        TextView rangeLabel=text("Radar range: "+prefs.getInt("range",40)+" km",13,CYAN);
+        final boolean settingsMiles=prefs.getBoolean("miles",false);
+        TextView rangeLabel=text("Radar range: "+distanceLabel(prefs.getInt("range",40)),13,CYAN);
         range.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            public void onProgressChanged(SeekBar s,int p,boolean user){rangeLabel.setText("Radar range: "+(p+5)+" km");}
+            public void onProgressChanged(SeekBar s,int p,boolean user){
+                int km=p+5;
+                double display=settingsMiles?km/1.609344:km;
+                rangeLabel.setText("Radar range: "+String.format(Locale.US,settingsMiles?"%.0f mi":"%.0f km",display));
+            }
             public void onStartTrackingTouch(SeekBar s){} public void onStopTrackingTouch(SeekBar s){}
         });
         page.addView(rangeLabel);page.addView(range);
@@ -607,6 +738,8 @@ public class FireMainActivity extends Activity {
                     .putInt("range",range.getProgress()+5)
                     .putInt("refresh",refresh.getProgress()+10)
                     .putBoolean("clock24",clock24.isChecked())
+                    .putBoolean("miles",milesBox.isChecked())
+                    .putBoolean("fahrenheit",fahrenheitBox.isChecked())
                     .putBoolean("trails",trails.isChecked())
                     .putString("radarStyle",styleIds[style.getSelectedItemPosition()])
                     .putInt("orientation",orientation.getSelectedItemPosition()*90)
@@ -626,6 +759,11 @@ public class FireMainActivity extends Activity {
 
     private EditText field(String value,String hint){
         EditText e=new EditText(this);e.setText(value);e.setHint(hint);e.setTextColor(TEXT);e.setHintTextColor(DIM);e.setSingleLine(true);e.setBackgroundColor(PANEL);e.setPadding(dp(8),dp(8),dp(8),dp(8));return e;
+    }
+
+    private String distanceLabel(double km) {
+        if(prefs.getBoolean("miles",false)) return String.format(Locale.US,"%.1f mi",km/1.609344);
+        return String.format(Locale.US,"%.1f km",km);
     }
 
     private double currentLat(){return Double.longBitsToDouble(prefs.getLong("latBits",Double.doubleToRawLongBits(53.8008)));}
@@ -714,10 +852,18 @@ public class FireMainActivity extends Activity {
             super.onDraw(canvas);
             float cx = getWidth() / 2f;
             float cy = getHeight() / 2f;
-            float radius = Math.min(getWidth(), getHeight()) * 0.40f;
+            float radius = Math.min(getWidth(), getHeight()) * 0.445f;
 
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(4f);
+            paint.setColor(Color.argb(45,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+            paint.setStrokeWidth(12f);
+            canvas.drawCircle(cx, cy, radius+5f, paint);
+            paint.setColor(Color.argb(80,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+            paint.setStrokeWidth(2f);
+            canvas.drawCircle(cx, cy, radius*.73f, paint);
+            canvas.drawCircle(cx, cy, radius*.48f, paint);
+
+            paint.setStrokeWidth(5f);
             paint.setColor(GREEN);
             canvas.drawCircle(cx, cy, radius, paint);
 
@@ -746,12 +892,20 @@ public class FireMainActivity extends Activity {
             canvas.drawCircle(cx, cy, 7f, paint);
 
             paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTextSize(24f);
-            paint.setColor(DIM);
-            canvas.drawText("12", cx, cy - radius + 35f, paint);
-            canvas.drawText("3", cx + radius - 24f, cy + 8f, paint);
-            canvas.drawText("6", cx, cy + radius - 18f, paint);
-            canvas.drawText("9", cx - radius + 24f, cy + 8f, paint);
+            paint.setTextSize(22f);
+            paint.setColor(TEXT);
+            for(int n=1;n<=12;n++){
+                double a=Math.toRadians(n*30-90);
+                float nr=radius-34f;
+                canvas.drawText(String.valueOf(n),(float)(cx+Math.cos(a)*nr),(float)(cy+Math.sin(a)*nr+8f),paint);
+            }
+
+            // A radar-like seconds trace gives the clock some of the native app character.
+            double sa=Math.toRadians(second*6-90);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2f);
+            paint.setColor(Color.argb(95,Color.red(GREEN),Color.green(GREEN),Color.blue(GREEN)));
+            canvas.drawLine(cx,cy,(float)(cx+Math.cos(sa)*radius),(float)(cy+Math.sin(sa)*radius),paint);
         }
 
         private void drawHand(Canvas canvas, float cx, float cy, float length, float degrees, float width, int color) {
@@ -824,6 +978,7 @@ public class FireMainActivity extends Activity {
         private int range=40;
         private int orientation=0;
         private boolean showTrails=true;
+        private boolean miles=false;
         private String style="classic";
         private String selected=null;
         private OnAircraftTapListener listener;
@@ -839,6 +994,7 @@ public class FireMainActivity extends Activity {
         void setStyle(String s){style=s==null?"classic":s;invalidate();}
         void setOrientation(int degrees){orientation=((degrees%360)+360)%360;invalidate();}
         void setTrails(boolean value){showTrails=value;invalidate();}
+        void setMiles(boolean value){miles=value;invalidate();}
         void setSelected(String hex){selected=hex;invalidate();}
 
         void setAircraft(List<Aircraft> a,int r){
@@ -857,7 +1013,7 @@ public class FireMainActivity extends Activity {
             super.onDraw(c);
             long now=android.os.SystemClock.uptimeMillis();
             float cx=getWidth()/2f,cy=getHeight()/2f;
-            float rad=Math.min(getWidth(),getHeight())*.43f;
+            float rad=Math.min(getWidth(),getHeight())*.475f;
             boolean square="tactical".equals(style)||"pulse".equals(style);
 
             p.setStyle(Paint.Style.FILL);
@@ -866,8 +1022,8 @@ public class FireMainActivity extends Activity {
             else c.drawCircle(cx,cy,rad,p);
 
             p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(2);
-            p.setColor(withAlpha(GREEN,110));
+            p.setStrokeWidth(3);
+            p.setColor(withAlpha(GREEN,155));
             if(square){
                 c.drawRect(cx-rad,cy-rad,cx+rad,cy+rad,p);
                 for(int i=1;i<=3;i++){
@@ -896,6 +1052,17 @@ public class FireMainActivity extends Activity {
             drawCardinal(c,cx,cy,rad,"S",180);
             drawCardinal(c,cx,cy,rad,"W",270);
 
+            p.setStyle(Paint.Style.FILL);
+            p.setTextAlign(Paint.Align.LEFT);
+            p.setTextSize(17);
+            p.setColor(withAlpha(GREEN,210));
+            for(int i=1;i<=4;i++){
+                double ringKm=range*i/4.0;
+                String label=miles?String.format(Locale.US,"%.0f mi",ringKm/1.609344):String.format(Locale.US,"%.0f km",ringKm);
+                float rr=rad*i/4f;
+                c.drawText(label,cx+6,cy-rr+17,p);
+            }
+
             drawSweep(c,cx,cy,rad,now,square);
 
             if(showTrails){
@@ -903,7 +1070,7 @@ public class FireMainActivity extends Activity {
                     ArrayList<PointF> t=trails.get(ac.hex);
                     if(t==null||t.size()<2)continue;
                     p.setStyle(Paint.Style.STROKE);
-                    p.setStrokeWidth(2);
+                    p.setStrokeWidth(3);
                     p.setColor(withAlpha(ac.military?Color.rgb(255,102,119):GREEN,80));
                     for(int i=1;i<t.size();i++){
                         PointF a=t.get(i-1),b=t.get(i);
@@ -999,7 +1166,7 @@ public class FireMainActivity extends Activity {
             c.save();
             c.rotate((float)((a.track==null?a.bearing:a.track)-orientation),x,y);
             p.setColor(color);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3);p.setStrokeCap(Paint.Cap.ROUND);
-            float r=10f;
+            float r=12f;
             String kind=a.kind();
             if("HELICOPTER".equals(kind)){
                 c.drawCircle(x,y,r*.45f,p);
@@ -1033,7 +1200,7 @@ public class FireMainActivity extends Activity {
 
         @Override public boolean onTouchEvent(MotionEvent e){
             if(e.getAction()!=MotionEvent.ACTION_UP)return true;
-            float cx=getWidth()/2f,cy=getHeight()/2f,rad=Math.min(getWidth(),getHeight())*.43f;
+            float cx=getWidth()/2f,cy=getHeight()/2f,rad=Math.min(getWidth(),getHeight())*.475f;
             Aircraft best=null;double bestPx=55;
             for(Aircraft a:data){
                 PointF pos=point(cx,cy,rad,(float)a.distanceKm,(float)a.bearing);
