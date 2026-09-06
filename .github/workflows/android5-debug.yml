@@ -50,6 +50,7 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Upload APK
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: InTheSky-FireHD10-Android5-debug
