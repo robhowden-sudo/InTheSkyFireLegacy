@@ -10,6 +10,15 @@ This is the separate legacy branch of the In The Sky project. The modern Android
 
 The Fire Legacy edition has grown well beyond the original four-page proof-of-concept and now aims for practical feature and visual parity with the Windows edition while remaining suitable for Android 5-era Fire hardware.
 
+## Download APK
+
+### **[Download In The Sky Fire Legacy v3.5.9 APK](https://github.com/robhowden-sudo/InTheSkyFireLegacy/releases/download/FlightRadar/app-debug.apk)**
+
+Current Android package: **v3.5.9 / versionCode 59**  
+Release: **In The Sky - Legacy Version 3.5.9**
+
+The APK is intended for the legacy Android/Fire OS build described below. On Fire OS, installation from unknown apps/sources must be permitted for the browser or file manager used to open the APK.
+
 ## Pages
 
 - **Radar** — live aircraft radar with selectable contacts, range controls, orientation, filters and aircraft details.
