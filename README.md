@@ -1,122 +1,115 @@
 # In The Sky — Fire HD Legacy
 
-A lightweight Android 5.1 / Fire OS 5 edition of **In The Sky**, built specifically for older hardware such as the Amazon Fire HD 10 (7th generation).
+**In The Sky Fire Legacy** is the Android 5.1 / Fire OS 5 edition of the In The Sky dashboard, built for older tablets such as the Amazon Fire HD 10 (7th generation).
 
-This is the separate legacy branch of the In The Sky project. The modern Android/Fold application remains in `InTheSkyNative`.
+It brings live aircraft tracking, flight information, weather, clocks, astronomy, Sky View and launch tracking into a single landscape dashboard while staying compatible with legacy Android hardware.
 
-## Current version
+## Current tested build
 
-**v3.5.9 — Page Cycle Selection**
+**v3.6.23 · versionCode 83**
 
-The Fire Legacy edition has grown well beyond the original four-page proof-of-concept and now aims for practical feature and visual parity with the Windows edition while remaining suitable for Android 5-era Fire hardware.
+Latest tested Android Studio source baseline: **Launches Selection & Image Fix**.
 
-## Download APK
+> The modern Android/Fold project is maintained separately. This repository is specifically for the lightweight Fire HD / Android 5 legacy edition.
 
-### **[Download In The Sky Fire Legacy v3.5.9 APK](https://github.com/robhowden-sudo/InTheSkyFireLegacy/releases/download/FlightRadar/app-debug.apk)**
+## What it includes
 
-Current Android package: **v3.5.9 / versionCode 59**  
-Release: **In The Sky - Legacy Version 3.5.9**
+### Radar
+- Live aircraft contacts from ADSB.lol and Airplanes.live
+- OpenSky fallback and local cache support
+- Range controls and persistent radar orientation
+- Selectable contacts with callsign, ICAO, registration, type, altitude, speed, heading, range and bearing
+- Aircraft reference metadata and route information where available
+- Ground-mode aircraft retained when supplied by receiver networks
 
-The APK is intended for the legacy Android/Fire OS build described below. On Fire OS, installation from unknown apps/sources must be permitted for the browser or file manager used to open the APK.
+### Flight
+- Selected-aircraft tracking
+- Hybrid world/regional map presentation
+- HOME, aircraft, route and destination overlays
+- Follow Target, Zoom to Path, Frame Route, World and zoom controls
+- Bundled city, airport and runway data for closer regional views
 
-## Pages
+### Weather
+- Current conditions and forecast data
+- Cached/fallback weather support for unreliable legacy connections
+- Open-Meteo primary data with MET Norway fallback
 
-- **Radar** — live aircraft radar with selectable contacts, range controls, orientation, filters and aircraft details.
-- **Flight** — selected-aircraft tracking, route/path display and hybrid world/regional map.
-- **Weather** — current conditions, forecast and weather data with fallback/cache support.
-- **Time** — local and reference clocks plus date/time information.
-- **Space** — astronomical and orbital information.
-- **Sky View** — local sky panorama for celestial objects, satellites, aircraft and small bodies.
-- **Launches** — upcoming space launches and mission information.
-- **Settings** — location, units, radar, Sky/Dock, page cycling and other application preferences.
+### Time
+- Local and reference clock information
+- Date/time display designed for always-on dashboard use
 
-## Radar and aircraft data
+### Space
+- Sun, Moon, planetary and orbital information
+- ISS information and reference imagery
+- Local calculations where practical to minimise unnecessary network traffic
 
-Radar combines **ADSB.lol** and **Airplanes.live** coverage and deduplicates contacts by ICAO address. **OpenSky** remains an emergency fallback, with local cached data available if live providers cannot be reached.
+### Sky View
+- Local sky panorama for the Sun, Moon, planets and major stars
+- Satellite positions from cached TLE data
+- Live aircraft overlay
+- Asteroid and comet support
+- Selectable objects with a collapsible details panel
+- Below-horizon objects are reported instead of silently disappearing
 
-Ground-mode aircraft are retained when supplied by the receiver networks.
+### Launches
+- Upcoming launch list and mission information
+- Strict single-selection behaviour
+- Initial mission selection is highlighted correctly
+- Double-tap selection support
+- Improved Launch Library image parsing
+- Mission and rocket image fallbacks
+- NASA Images fallback when the primary launch image cannot be loaded
+- Late image responses are discarded when the user has selected another mission
+- Visible unavailable state when no suitable image can be found
 
-Aircraft reference information can include callsign, ICAO address, registration, aircraft type, altitude, speed, heading, range, bearing, manufacturer/model and owner/operator information where available. Reference metadata is cached locally to reduce unnecessary network traffic.
+### Sky / Dock mode
+Automatic page cycling can rotate through selected dashboard pages at a configurable interval.
 
-Radar orientation is stored independently from Sky View orientation and persists across page changes and app restarts.
-
-## Flight map
-
-The Flight page uses a hybrid map renderer:
-
-- themed global raster map at world/continental scale;
-- native vector-style regional view at closer zoom levels;
-- bundled city and airport geographic data;
-- airport/runway detail at close range;
-- adaptive labels;
-- HOME, aircraft, route and destination overlays;
-- automatic Follow Target, Zoom to Path, Frame Route, World and +/- camera controls.
-
-The regional renderer avoids magnifying the low-resolution world asset at close zoom levels.
-
-## Sky View
-
-Sky View combines locally calculated astronomy with live/cached orbital and aircraft data.
-
-Supported object classes include:
-
-- Sun and Moon;
-- planets;
-- major stars;
-- satellites;
-- aircraft;
-- asteroids and comets.
-
-Objects below the display horizon are reported rather than silently appearing to be missing. Satellite positions are propagated locally from cached TLE data, while small-body ephemerides use NASA/JPL Horizons with caching.
-
-Selecting an object opens a collapsible **OBJECT DETAILS** panel. Depending on object type it can show physical/reference specifications, current azimuth/elevation, horizon state, satellite range, aircraft telemetry and cached aircraft metadata.
-
-## Sky / Dock mode
-
-Automatic page cycling has a configurable duration and per-page selection.
-
-The following pages can independently be included or excluded from the cycle:
+Pages can be enabled or disabled individually:
 
 **Radar · Flight · Weather · Time · Space · Sky View · Launches**
 
-All pages are enabled by default.
+## Data sources and resilience
 
-## Data resilience and caching
+The Legacy build deliberately uses caching and fallbacks so it remains useful on older hardware and does not hammer public APIs like an over-caffeinated polling script.
 
-The legacy build deliberately uses caching and fallbacks to reduce network traffic and remain useful on older hardware.
-
-Major data paths include:
-
-- aircraft: ADSB.lol + Airplanes.live → OpenSky fallback → cache;
-- aircraft metadata/routes: ADSBDB → cache;
-- weather: Open-Meteo → MET Norway → cache;
-- satellites: SatNOGS → CelesTrak → cached TLE;
-- planets/Sun/Moon/stars: calculated locally;
-- asteroids/comets: NASA/JPL Horizons → cache;
-- launches: The Space Devs Launch Library 2.3 → RocketLaunch.Live fallback;
-- ISS: WhereTheISS → cache;
-- reference images: Wikimedia/Wikipedia/NASA sources with local caching/placeholders.
+- **Aircraft:** ADSB.lol + Airplanes.live → OpenSky fallback → cache
+- **Aircraft metadata/routes:** ADSBDB → cache
+- **Weather:** Open-Meteo → MET Norway → cache
+- **Satellites:** SatNOGS → CelesTrak → cached TLE
+- **Sun / Moon / planets / stars:** calculated locally where practical
+- **Asteroids / comets:** NASA/JPL Horizons → cache
+- **Launches:** The Space Devs Launch Library → RocketLaunch.Live fallback
+- **ISS:** WhereTheISS → cache
+- **Reference imagery:** Wikimedia / Wikipedia / NASA sources with local caching and placeholders
 
 ## Compatibility
 
 - Minimum Android: **5.1 / API 22**
 - Target SDK: **28**
 - Compile SDK: **36**
-- UI: classic Android Views, no Jetpack Compose
-- No AndroidX runtime dependencies
+- UI: classic Android Views
+- No Jetpack Compose
 - Java 8 language level
 - TLS 1.2 explicitly enabled for legacy HTTPS compatibility
-
-Primary legacy hardware target: **Amazon Fire HD 10 (7th generation), Fire OS 5.7.1.0**.
+- Primary target: **Amazon Fire HD 10 (7th generation), Fire OS 5.7.1.0**
 
 ## Building
 
-The project is intended to open directly in **Android Studio**.
+Open the project in **Android Studio** and build the `app` module, or use the included GitHub Actions workflow.
 
-The repository also contains a GitHub Actions workflow for producing a debug APK from `main`. Open the latest successful **Build Fire HD 10 Android 5 APK** workflow run and download the generated debug artifact.
+The debug APK is generated at:
 
-## Development baseline
+`app/build/outputs/apk/debug/app-debug.apk`
 
-Current application baseline: **v3.5.9 / versionCode 59**.
+For local build notes see `BUILD_LOCAL.md` in the v3.6.23 source package.
 
-The Windows `airspace_full.py` application and its assets are the parity reference for the Fire Legacy edition.
+## Current development baseline
+
+**In The Sky Fire Legacy v3.6.23 / versionCode 83**
+
+This build was developed from the Windows Store parity layout and then evolved specifically for touch input and legacy Fire hardware.
+
+## Project status
+
+Active legacy build. The goal is to preserve a capable, information-dense In The Sky experience on hardware that modern Android frameworks increasingly pretend never existed.
