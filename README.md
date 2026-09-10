@@ -94,7 +94,7 @@ The Legacy build deliberately uses caching and fallbacks so it remains useful on
 - TLS 1.2 explicitly enabled for legacy HTTPS compatibility
 - Primary target: **Amazon Fire HD 10 (7th generation), Fire OS 5.7.1.0**
 
-## Building
+## Building from source
 
 Open the project in **Android Studio** and build the `app` module, or use the included GitHub Actions workflow.
 
@@ -102,14 +102,14 @@ The debug APK is generated at:
 
 `app/build/outputs/apk/debug/app-debug.apk`
 
-For local build notes see `BUILD_LOCAL.md` in the v3.6.23 source package.
+Additional local build notes are in [`BUILD_LOCAL.md`](BUILD_LOCAL.md).
 
-## Current development baseline
+## Changelog
 
-**In The Sky Fire Legacy v3.6.23 / versionCode 83**
-
-This build was developed from the Windows Store parity layout and then evolved specifically for touch input and legacy Fire hardware.
+Release highlights are consolidated in [`CHANGELOG.md`](CHANGELOG.md). Detailed development history remains available through the repository commit history.
 
 ## Project status
 
-Active legacy build. The goal is to preserve a capable, information-dense In The Sky experience on hardware that modern Android frameworks increasingly pretend never existed.
+**Active legacy build · v3.6.23 / versionCode 83**
+
+This build was developed from the Windows Store parity layout and then evolved specifically for touch input and legacy Fire hardware. The aim is to preserve a capable, information-dense In The Sky experience on hardware that modern Android frameworks increasingly pretend never existed.
