@@ -10,8 +10,8 @@ android {
         applicationId = "org.inthesky.firelegacy"
         minSdk = 22
         targetSdk = 28
-        versionCode = 1
-        versionName = "1.0-fire-alpha1"
+        versionCode = 83
+        versionName = "3.6.23"
     }
 
     buildTypes {
